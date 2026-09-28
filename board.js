@@ -1,0 +1,1746 @@
+// Birdwatcher — a Woodpecker CI status board.
+//
+// One file, two homes:
+//   * Woodpecker UI  — served as WOODPECKER_CUSTOM_JS_FILE, concatenated after
+//                      the site's config.js. Renders at <woodpecker><boardPath>
+//                      on top of the session, adds a navbar link everywhere else.
+//   * index.html     — standalone shell (loads config.js, then this file).
+//
+// Everything site-specific (servers, repos, trackers, the reports host) comes
+// from window.BIRDWATCHER_CONFIG; see config.example.js. Styles and markup are
+// inlined below so the file is self-contained.
+(() => {
+  const CSS = "/* Birdwatcher — scoped under #birdwatcher (native CSS nesting) */\n  @keyframes spin { to { transform: rotate(360deg); } }\n  @keyframes pulse { 0%,100% { transform: scale(1); opacity: .2; } 50% { transform: scale(1.12); opacity: .08; } }\n  @keyframes pillpulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sc) 30%, transparent); } 50% { box-shadow: 0 0 0 5px transparent; } }\n  @keyframes draw { to { stroke-dashoffset: 0; } }\n  @keyframes tick { 0% { transform: rotate(0); } 50% { transform: rotate(6deg); } }\n  @keyframes blink { 50% { opacity: .3; } }\n  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }\n  @keyframes shimmer { to { background-position: -200% 0; } }\n#birdwatcher {\n  & {\n    --bg: #f4f5f8;\n    --bg-glow-a: rgba(59,130,246,.10);\n    --bg-glow-b: rgba(12,163,12,.08);\n    --surface: #ffffff;\n    --surface-2: #f7f8fb;\n    --border: rgba(15,23,42,.10);\n    --border-strong: rgba(15,23,42,.18);\n    --text: #0f172a;\n    --text-2: #475569;\n    --text-3: #8b93a7;\n    --accent: #2563eb;\n    --good: #0ca30c;\n    --bad: #d03b3b;\n    --warn: #d99a00;\n    --run: #2563eb;\n    --none: #8b93a7;\n    --shadow: 0 1px 2px rgba(15,23,42,.06), 0 8px 24px -12px rgba(15,23,42,.18);\n    --shadow-lg: 0 2px 4px rgba(15,23,42,.06), 0 24px 48px -24px rgba(15,23,42,.30);\n    --radius: 16px;\n    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif;\n    color-scheme: light dark;\n  }\n  @media (prefers-color-scheme: dark) {\n    &:not([data-theme=\"light\"]) {\n      --bg: #0a0d13;\n      --bg-glow-a: rgba(59,130,246,.14);\n      --bg-glow-b: rgba(34,197,94,.10);\n      --surface: #11151d;\n      --surface-2: #171c26;\n      --border: rgba(255,255,255,.07);\n      --border-strong: rgba(255,255,255,.14);\n      --text: #e8ebf2;\n      --text-2: #a3abbe;\n      --text-3: #6b7387;\n      --accent: #60a5fa;\n      --good: #22c55e;\n      --bad: #ef4444;\n      --warn: #fab219;\n      --run: #60a5fa;\n      --none: #6b7387;\n      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);\n      --shadow-lg: 0 2px 4px rgba(0,0,0,.4), 0 24px 48px -24px rgba(0,0,0,.8);\n    }\n  }\n  &[data-theme=\"dark\"] {\n    --bg: #0a0d13; --bg-glow-a: rgba(59,130,246,.14); --bg-glow-b: rgba(34,197,94,.10);\n    --surface: #11151d; --surface-2: #171c26; --border: rgba(255,255,255,.07); --border-strong: rgba(255,255,255,.14);\n    --text: #e8ebf2; --text-2: #a3abbe; --text-3: #6b7387; --accent: #60a5fa;\n    --good: #22c55e; --bad: #ef4444; --warn: #fab219; --run: #60a5fa; --none: #6b7387;\n    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);\n    --shadow-lg: 0 2px 4px rgba(0,0,0,.4), 0 24px 48px -24px rgba(0,0,0,.8);\n  }\n\n  * { margin: 0; padding: 0; box-sizing: border-box; }\n  & { -webkit-font-smoothing: antialiased; position: relative; isolation: isolate; }\n  & {\n    font-family: var(--sans);\n    background: var(--bg);\n    color: var(--text);\n    min-height: 100vh;\n    font-size: 14px;\n    line-height: 1.45;\n    position: relative;\n    overflow-x: hidden;\n  }\n  &::before, &::after {\n    content: \"\"; position: fixed; z-index: -1; pointer-events: none;\n    width: 70vw; height: 70vw; border-radius: 50%; filter: blur(80px);\n  }\n  &::before { top: -35vw; left: -20vw; background: radial-gradient(closest-side, var(--bg-glow-a), transparent); }\n  &::after { bottom: -40vw; right: -25vw; background: radial-gradient(closest-side, var(--bg-glow-b), transparent); }\n\n  a { color: inherit; text-decoration: none; }\n  a:hover { text-decoration: underline; text-decoration-color: var(--text-3); }\n  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }\n  .mono { font-family: var(--mono); font-feature-settings: \"tnum\"; }\n  .muted { color: var(--text-2); }\n  .faint { color: var(--text-3); }\n  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n\n  .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 24px 64px; position: relative; }\n\n  /* ---------- top bar ---------- */\n  .topbar { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }\n  .brand { display: flex; align-items: center; gap: 12px; }\n  .bw-logo { display: block; flex: none; line-height: 0; border-radius: 12px; transition: transform .15s ease; }\n  .bw-logo:hover { transform: scale(1.04); }\n  .bw-logo:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }\n  .bw-logo img { width: 100%; height: auto; display: block; }\n  .brand .bw-logo { width: 56px; }\n  /* Beside the feed: the big logo sits in the left gutter once the viewport\n     has room for it next to the 1280px column; the topbar one steps aside. */\n  .bw-side { display: none; position: absolute; top: 20px; right: 100%; width: 168px; margin-right: 8px; }\n  @media (min-width: 1660px) { .bw-side { display: block; } .brand .bw-logo { display: none; } }\n  .brand h1 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; }\n  .brand h1 span { color: var(--text-3); font-weight: 500; }\n  .topbar .spacer { flex: 1; }\n  .refresh { display: flex; align-items: center; gap: 10px; color: var(--text-2); font-size: 13px; }\n  .refresh .ring { width: 22px; height: 22px; transform: rotate(-90deg); }\n  .refresh .ring circle { fill: none; stroke-width: 3; }\n  .refresh .ring .track { stroke: var(--border-strong); }\n  .refresh .ring .prog { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 1s linear; }\n  .iconbtn {\n    width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;\n    border: 1px solid var(--border); background: var(--surface); color: var(--text-2); box-shadow: var(--shadow);\n    transition: transform .15s, color .15s, border-color .15s;\n  }\n  .iconbtn:hover { color: var(--text); border-color: var(--border-strong); transform: translateY(-1px); }\n  .iconbtn.spin svg { animation: spin 1s linear infinite; }\n\n  /* ---------- tabs ---------- */\n  .tabs { display: flex; gap: 6px; padding: 4px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); width: fit-content; box-shadow: var(--shadow); margin-bottom: 24px; flex-wrap: wrap; }\n  .tab { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 10px; font-weight: 600; color: var(--text-2); transition: background .15s, color .15s; }\n  .tab:hover { color: var(--text); }\n  .tab.active { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }\n  .tab .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--none); }\n  .tab .cnt { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); }\n\n  /* ---------- sections ---------- */\n  .section-title { display: flex; align-items: baseline; gap: 10px; margin: 28px 0 12px; }\n  .section-title h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-2); }\n  .section-title .sub { font-size: 12px; color: var(--text-3); }\n\n  .hero-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }\n\n  .card {\n    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);\n    box-shadow: var(--shadow); position: relative; overflow: hidden;\n    animation: rise .4s cubic-bezier(.2,.7,.2,1) both;\n  }\n  .card::before { content: \"\"; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--sc, var(--none)); opacity: .9; }\n  .card.failure::after, .card.error::after, .card.killed::after {\n    content: \"\"; position: absolute; inset: 0; pointer-events: none;\n    background: radial-gradient(120% 80% at 100% 0%, color-mix(in srgb, var(--bad) 14%, transparent), transparent 60%);\n  }\n  .card.success::after { content: \"\"; position: absolute; inset: 0; pointer-events: none;\n    background: radial-gradient(120% 80% at 100% 0%, color-mix(in srgb, var(--good) 10%, transparent), transparent 60%); }\n  .card.running::after, .card.started::after { content: \"\"; position: absolute; inset: 0; pointer-events: none;\n    background: radial-gradient(120% 80% at 100% 0%, color-mix(in srgb, var(--run) 14%, transparent), transparent 60%); }\n\n  .hero { padding: 20px 20px 16px; display: grid; grid-template-columns: 72px 1fr; gap: 16px; position: relative; z-index: 1; }\n  .hero .kicker { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); margin-bottom: 6px; }\n  .hero .kicker .branch { font-family: var(--mono); text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; }\n  .hero .headline { font-size: 18px; font-weight: 700; letter-spacing: -.01em; line-height: 1.25; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }\n  .hero .msg { color: var(--text-2); font-size: 13px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }\n  .hero .meta { display: flex; align-items: center; gap: 14px; margin-top: 12px; color: var(--text-3); font-size: 12px; flex-wrap: wrap; }\n  .hero .meta .who { display: flex; align-items: center; gap: 6px; color: var(--text-2); }\n  .hero .meta .who img { width: 18px; height: 18px; border-radius: 50%; }\n  .hero-foot { padding: 12px 20px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; position: relative; z-index: 1; }\n  .hero-foot .hist { display: flex; gap: 3px; align-items: flex-end; flex-wrap: wrap; max-width: 100%; }\n  .hero-foot .hist a { display: block; width: 9px; height: 18px; border-radius: 3px; background: var(--c); opacity: .85; transition: transform .12s, opacity .12s; }\n  .hero-foot .hist a:hover { transform: scaleY(1.2); opacity: 1; }\n  .hero-foot .hist a.cur { outline: 2px solid var(--surface); box-shadow: 0 0 0 4px var(--c); }\n  .hero-foot .steps { display: flex; gap: 6px; flex-wrap: wrap; }\n\n  /* ---------- status glyph (big) ---------- */\n  .glyph { width: 72px; height: 72px; position: relative; display: grid; place-items: center; }\n  .glyph .ring { position: absolute; inset: 0; border-radius: 50%; }\n  .glyph svg.icon { width: 30px; height: 30px; position: relative; color: #fff; stroke: currentColor; stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; }\n  .glyph .disc { position: absolute; inset: 8px; border-radius: 50%; background: var(--sc); display: grid; place-items: center; box-shadow: 0 8px 20px -8px var(--sc); }\n  .glyph.success .ring { background: conic-gradient(var(--sc) 360deg, transparent 0); opacity: .18; }\n  .glyph.success svg.icon path { stroke-dasharray: 40; stroke-dashoffset: 40; animation: draw .5s .15s ease-out forwards; }\n  .glyph.failure .ring, .glyph.error .ring, .glyph.killed .ring { background: var(--sc); opacity: .2; animation: pulse 2s ease-in-out infinite; }\n  .glyph.running .ring, .glyph.started .ring { background: conic-gradient(from 0deg, transparent 0 60%, var(--sc) 100%); animation: spin 1.1s linear infinite; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px)); mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px)); }\n  .glyph.running .disc, .glyph.started .disc { background: color-mix(in srgb, var(--sc) 85%, transparent); }\n  .glyph.pending .ring, .glyph.blocked .ring { background: var(--sc); opacity: .18; }\n  .glyph.pending svg.icon, .glyph.blocked svg.icon { animation: tick 2s steps(1) infinite; }\n  .glyph.none .disc, .glyph.skipped .disc, .glyph.declined .disc { background: var(--surface-2); border: 2px dashed var(--border-strong); box-shadow: none; }\n  .glyph.none svg.icon, .glyph.skipped svg.icon, .glyph.declined svg.icon { color: var(--text-3); }\n\n  /* ---------- status pill ---------- */\n  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: .01em; color: var(--sc); background: color-mix(in srgb, var(--sc) 12%, transparent); border: 1px solid color-mix(in srgb, var(--sc) 30%, transparent); white-space: nowrap; }\n  .pill svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }\n  .pill.running svg, .pill.started svg { animation: spin 1s linear infinite; }\n  .pill.failure, .pill.error, .pill.killed { animation: pillpulse 2.4s ease-in-out infinite; }\n  .pill.none { color: var(--text-3); background: transparent; border-style: dashed; border-color: var(--border-strong); }\n\n  .tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--border); color: var(--text-2); background: var(--surface-2); white-space: nowrap; flex: none; max-width: 100%; }\n  .tag.draft { color: var(--text-3); border-style: dashed; }\n  .tag.dnm { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); }\n  .tag.stale { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); }\n  .tag.head { color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, transparent); background: color-mix(in srgb, var(--good) 8%, transparent); }\n  .tag.err { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); }\n  .tag.conflict { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 12%, transparent); font-weight: 700; }\n  .tag.mergeable { color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, transparent); background: color-mix(in srgb, var(--good) 8%, transparent); }\n\n  .step { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; padding: 3px 8px; border-radius: 999px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); }\n  .step i { width: 7px; height: 7px; border-radius: 50%; background: var(--sc); display: inline-block; }\n  .step.running i, .step.started i { animation: blink 1s ease-in-out infinite; }\n\n  /* ---------- summary tiles ---------- */\n  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 24px; }\n  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); display: flex; align-items: center; gap: 12px; cursor: pointer; transition: transform .15s, border-color .15s; animation: rise .4s cubic-bezier(.2,.7,.2,1) both; }\n  .tile:hover { transform: translateY(-1px); border-color: var(--border-strong); }\n  .tile.active { border-color: var(--sc, var(--accent)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sc, var(--accent)) 18%, transparent), var(--shadow); }\n  .tile .num { font-size: 26px; font-weight: 800; letter-spacing: -.03em; line-height: 1; }\n  .tile .lbl { font-size: 12px; color: var(--text-2); font-weight: 500; }\n  .tile .mark { width: 10px; height: 38px; border-radius: 6px; background: var(--sc, var(--text-3)); opacity: .9; }\n\n  /* ---------- PR list ---------- */\n  .prlist { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; animation: rise .4s cubic-bezier(.2,.7,.2,1) both; }\n  .pr { display: grid; grid-template-columns: 48px 1fr auto; gap: 14px; padding: 14px 18px; border-top: 1px solid var(--border); align-items: center; position: relative; transition: background .15s; cursor: pointer; }\n  .pr:first-child { border-top: 0; }\n  .pr:hover { background: var(--surface-2); }\n  .pr::before { content: \"\"; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--sc, transparent); }\n  .avatar { width: 44px; height: 44px; border-radius: 50%; position: relative; display: grid; place-items: center; }\n  .avatar img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; display: block; background: var(--surface-2); }\n  .avatar::before { content: \"\"; position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--sc, var(--border-strong)); }\n  .avatar.running::before, .avatar.started::before { border-style: dashed; animation: spin 6s linear infinite; }\n  .avatar .badge { position: absolute; right: -2px; bottom: -2px; width: 18px; height: 18px; border-radius: 50%; background: var(--sc, var(--none)); border: 2px solid var(--surface); display: grid; place-items: center; }\n  .avatar .badge svg { width: 9px; height: 9px; stroke: #fff; stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; }\n  .avatar.none .badge { display: none; }\n  .avatar .initials { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: #fff; background: linear-gradient(135deg, #64748b, #334155); }\n  .pr .title { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; min-width: 0; }\n  .pr .title a { min-width: 0; }\n  .pr .sub { display: flex; align-items: center; gap: 10px; margin-top: 4px; color: var(--text-3); font-size: 12px; flex-wrap: wrap; }\n  .pr .sub .num { font-family: var(--mono); color: var(--text-2); }\n  .pr .sub .ticket { font-family: var(--mono); font-weight: 600; color: var(--accent); text-decoration: none; display: inline-flex; align-items: center; gap: 3px; }\n  .pr .sub .ticket:hover { text-decoration: underline; }\n  .pr .sub .br { font-family: var(--mono); font-size: 11px; color: var(--text-3); max-width: 320px; }\n  .pr .right { display: flex; align-items: center; gap: 12px; justify-self: end; }\n  .pr .right .stat { text-align: right; font-size: 12px; color: var(--text-3); line-height: 1.3; }\n  .pr .right .stat b { display: block; color: var(--text-2); font-weight: 600; font-family: var(--mono); }\n  .pr .right .plink { font-family: var(--mono); font-size: 12px; color: var(--text-2); padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); }\n  .pr .right .plink:hover { border-color: var(--border-strong); text-decoration: none; color: var(--text); }\n  .pr .chev { color: var(--text-3); transition: transform .2s; }\n  .pr.open .chev { transform: rotate(180deg); }\n  .pr-detail { grid-column: 1 / -1; display: none; padding: 10px 0 0 62px; }\n  .pr.open .pr-detail { display: block; animation: rise .25s ease both; }\n  .pr-detail .steps { display: flex; gap: 6px; flex-wrap: wrap; }\n  .pr-detail .hist { display: flex; gap: 3px; align-items: center; margin-top: 10px; }\n  .pr-detail .hist a { width: 9px; height: 14px; border-radius: 3px; background: var(--c); opacity: .85; display: block; }\n  .pr-detail .hist a:hover { opacity: 1; }\n  .pr-detail .hist .lbl { font-size: 11px; color: var(--text-3); margin-left: 8px; }\n\n  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; align-items: center; }\n  .chip { padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--text-2); border: 1px solid var(--border); background: var(--surface); transition: all .15s; }\n  .chip:hover { border-color: var(--border-strong); color: var(--text); }\n  .chip.active { background: var(--text); color: var(--bg); border-color: var(--text); }\n  .filters .search { margin-left: auto; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; width: 240px; }\n  .filters .search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }\n\n  /* ---------- notices ---------- */\n  .notice { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 13px; margin-bottom: 16px; box-shadow: var(--shadow); }\n  .notice svg { flex: none; width: 18px; height: 18px; stroke: var(--warn); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; margin-top: 1px; }\n  .notice.err svg { stroke: var(--bad); }\n  .notice b { color: var(--text); }\n  .notice button.link { color: var(--accent); font-weight: 600; padding: 0; }\n  .empty { padding: 40px; text-align: center; color: var(--text-3); }\n\n  /* ---------- skeleton ---------- */\n  .sk { background: linear-gradient(90deg, var(--surface-2) 25%, color-mix(in srgb, var(--surface-2) 60%, var(--surface)) 50%, var(--surface-2) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; border-radius: 8px; }\n  .sk-card { height: 150px; border-radius: var(--radius); }\n  .sk-row { height: 72px; border-radius: 0; border-top: 1px solid var(--border); }\n\n  /* ---------- settings dialog ---------- */\n  dialog { border: 1px solid var(--border); border-radius: 18px; background: var(--surface); color: var(--text); padding: 0; width: min(560px, calc(100vw - 32px)); box-shadow: var(--shadow-lg); }\n  dialog::backdrop { background: rgba(0,0,0,.45); backdrop-filter: blur(6px); }\n  dialog .dhead { padding: 20px 24px 0; }\n  dialog h3 { font-size: 17px; font-weight: 700; }\n  dialog p { color: var(--text-2); font-size: 13px; margin-top: 4px; }\n  dialog form { padding: 20px 24px 24px; display: grid; gap: 16px; }\n  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }\n  .field input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text); font: inherit; font-family: var(--mono); font-size: 13px; }\n  .field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }\n  .field .hint { font-size: 12px; color: var(--text-3); margin-top: 6px; }\n  .field .hint a { color: var(--accent); }\n  .actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; }\n  .btn { padding: 9px 16px; border-radius: 10px; font-weight: 600; font-size: 13px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }\n  .btn.primary { background: var(--accent); color: #fff; border-color: transparent; }\n  .btn.primary:hover { filter: brightness(1.08); }\n  .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }\n  .segmented button { padding: 7px 12px; font-size: 12px; font-weight: 600; color: var(--text-2); }\n  .segmented button.active { background: var(--surface-2); color: var(--text); }\n  .kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px; color: var(--text-2); }\n\n  /* ---------- insights (benchmarks / coverage / nightly) ---------- */\n  .insights { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }\n  .insights .card { padding: 18px 20px 16px; }\n  .insights .card.wide { grid-column: 1 / -1; }\n  .ihead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }\n  .ihead h3 { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }\n  .ihead .sub { font-size: 12px; color: var(--text-3); }\n  .ihead .links { margin-left: auto; display: flex; gap: 10px; font-size: 12px; }\n  .ihead .links a { color: var(--accent); display: inline-flex; align-items: center; gap: 4px; }\n  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }\n  .metric { padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); min-width: 0; }\n  .metric .l { font-size: 11px; color: var(--text-3); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }\n  .metric .v { font-size: 22px; font-weight: 800; letter-spacing: -.03em; line-height: 1.15; margin-top: 4px; font-variant-numeric: tabular-nums; }\n  .metric .v small { font-size: 12px; font-weight: 500; color: var(--text-3); margin-left: 3px; letter-spacing: 0; }\n  .metric .s { font-size: 11px; color: var(--text-3); margin-top: 2px; }\n  .hero-num { font-size: 48px; font-weight: 800; letter-spacing: -.04em; line-height: 1; font-variant-numeric: tabular-nums; }\n  .hero-num small { font-size: 16px; font-weight: 600; color: var(--text-3); letter-spacing: 0; }\n  .delta { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 6px; }\n  .delta.good { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }\n  .delta.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }\n  .delta.flat { color: var(--text-2); background: var(--surface-2); }\n  .delta.na { color: var(--text-3); }\n  .meter { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 15%, transparent); overflow: hidden; margin-top: 8px; }\n  .meter i { display: block; height: 100%; border-radius: 999px; background: var(--accent); transition: width .6s cubic-bezier(.2,.7,.2,1); }\n  .cmp { width: 100%; border-collapse: collapse; font-size: 12.5px; }\n  .cmp th { text-align: left; font-size: 11px; color: var(--text-3); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: 6px 8px; border-bottom: 1px solid var(--border); }\n  .cmp td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }\n  .cmp tr:last-child td { border-bottom: 0; }\n  .cmp td.n, .cmp th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }\n  .cmp td.n b { font-weight: 600; color: var(--text); }\n  .cmp .name { font-weight: 600; }\n  .cmp .name small { display: block; color: var(--text-3); font-weight: 400; font-size: 11px; }\n  .bars { display: grid; gap: 6px; }\n  .bar-row { display: grid; grid-template-columns: 72px 1fr 64px; gap: 10px; align-items: center; font-size: 12px; }\n  .bar-row .lbl { font-family: var(--mono); color: var(--text-2); font-size: 11.5px; }\n  .bar-row .track { display: grid; gap: 2px; }\n  .bar-row .track i { display: block; height: 7px; border-radius: 4px; min-width: 2px; }\n  .bar-row .track i.a { background: var(--s-a); }\n  .bar-row .track i.b { background: var(--s-b); }\n  .bar-row .val { font-family: var(--mono); color: var(--text-3); font-size: 11px; text-align: right; white-space: nowrap; }\n  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-2); margin: 4px 0 10px; }\n  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }\n  .spark { width: 100%; height: 56px; display: block; overflow: visible; }\n  .spark path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }\n  .spark .area { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: none; }\n  .spark circle { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }\n  .spark .g { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 2 3; }\n  .sparkbox { display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: stretch; }\n  .sparkbox .sy { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; height: var(--sh, 56px); padding: 1px 0 2px; font-size: 9.5px; line-height: 1; color: var(--text-3); white-space: nowrap; }\n  .sparkbox .sy.one { justify-content: center; }\n  .sparkbox .sy i { font-style: normal; opacity: .7; margin-left: 1px; }\n  & { --s-a: #7c8db5; --s-b: #2563eb; }\n  &[data-theme=\"dark\"], &:not([data-theme=\"light\"]) { }\n  @media (prefers-color-scheme: dark) { &:not([data-theme=\"light\"]) { --s-a: #6b7793; --s-b: #60a5fa; } }\n  &[data-theme=\"dark\"] { --s-a: #6b7793; --s-b: #60a5fa; }\n  .pr-detail .reports { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }\n  .pr-detail .rep { flex: 1 1 380px; min-width: max-content; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); padding: 10px 12px; }\n  .pr-detail .rep .rh { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 700; margin-bottom: 6px; }\n  .pr-detail .rep .rh .faint { font-weight: 500; }\n  .pr-detail .rep .rh a { margin-left: auto; color: var(--accent); font-weight: 500; }\n  .pr-detail .rep .cmp { font-size: 12px; }\n  .pr-detail .rep .cmp td, .pr-detail .rep .cmp th { padding: 4px 6px; }\n  .hint { padding: 14px 16px; border-radius: 12px; border: 1px dashed var(--border-strong); color: var(--text-2); font-size: 13px; }\n  .hint b { color: var(--text); }\n  .hint code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }\n\n  /* ---------- woodpecker theme: exactly Woodpecker's shell colors ----------\n     Light: page bg-100 #fff, panel bg-100 with border bg-400 (gray-300), text gray-700/600/500.\n     Dark:  page bg-300 #2d313d, panel bg-200 #303440 with border bg-100 #434858, text gray-200/300/400.\n     Embedded the html[data-theme] Woodpecker sets picks the variant; standalone prefers-color-scheme does. */\n  &[data-theme=\"woodpecker\"] {\n    --bg: #ffffff; --surface: #ffffff; --surface-2: oklch(98.5% .002 247.839);\n    --border: oklch(87.2% .01 258.338); --border-strong: oklch(70.7% .022 261.325);\n    --text: oklch(37.3% .034 259.733); --text-2: oklch(44.6% .03 256.802); --text-3: oklch(55.1% .027 264.364);\n    --accent: oklch(54.6% .245 262.881); --good: #16a34a; --bad: #b91c1c; --warn: #ca8a04; --run: #0891b2; --none: #4b5563;\n    --prim: #369943; --prim-text: #fff; --tab-line: #369943;\n    --ctl: oklch(96.7% .003 264.542); --ctl-2: oklch(92.8% .006 264.531); --ctl-text: oklch(44.6% .03 256.802);\n    --nav: #369943; --nav-text: #fff;\n  }\n  :root[data-theme=\"dark\"] &[data-theme=\"woodpecker\"] {\n    --bg: #2d313d; --surface: #303440; --surface-2: #383c4a;\n    --border: #434858; --border-strong: #4c5165;\n    --text: oklch(92.8% .006 264.531); --text-2: oklch(87.2% .01 258.338); --text-3: oklch(70.7% .022 261.325);\n    --accent: oklch(70.7% .165 254.624); --good: #29904f; --bad: #ef5350; --warn: #e2be2d; --run: #1b869f; --none: oklch(70.7% .022 261.325);\n    --prim: #383c4a; --prim-text: oklch(92.8% .006 264.531); --tab-line: oklch(92.8% .006 264.531);\n    --ctl: #303440; --ctl-2: #383c4a; --ctl-text: oklch(87.2% .01 258.338);\n    --nav: #2a2e3a; --nav-text: oklch(87.2% .01 258.338);\n  }\n  @media (prefers-color-scheme: dark) { :root:not([data-theme]) &[data-theme=\"woodpecker\"] {\n    --bg: #2d313d; --surface: #303440; --surface-2: #383c4a;\n    --border: #434858; --border-strong: #4c5165;\n    --text: oklch(92.8% .006 264.531); --text-2: oklch(87.2% .01 258.338); --text-3: oklch(70.7% .022 261.325);\n    --accent: oklch(70.7% .165 254.624); --good: #29904f; --bad: #ef5350; --warn: #e2be2d; --run: #1b869f; --none: oklch(70.7% .022 261.325);\n    --prim: #383c4a; --prim-text: oklch(92.8% .006 264.531); --tab-line: oklch(92.8% .006 264.531);\n    --ctl: #303440; --ctl-2: #383c4a; --ctl-text: oklch(87.2% .01 258.338);\n    --nav: #2a2e3a; --nav-text: oklch(87.2% .01 258.338);\n  } }\n  &[data-theme=\"woodpecker\"] {\n    --shadow: none; --shadow-lg: 0 10px 30px -10px rgba(0,0,0,.35); --radius: 6px;\n    --sans: var(--font-sans, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial, sans-serif);\n    --mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace);\n    --s-a: var(--text-3); --s-b: var(--accent);\n    &::before, &::after { display: none; }\n    .card, .prlist, .tile, .strip, .notice, .owes, .action .ahead, .hint, dialog, .pr-detail .rep, .metric, .threads a { border-radius: var(--radius); box-shadow: none; }\n    .card::before, .card::after, .pr::before { display: none; }\n    .card, .tile, .prlist, .action, .pr-detail { animation: none; }\n    .brand h1 { font-size: 20px; font-weight: 600; }\n    .tabs, .tabs.repos { background: none; border: 0; border-radius: 0; padding: 0; box-shadow: none; gap: 0; }\n    .tabs.views { width: 100%; border-bottom: 1px solid var(--border); margin: 24px 0 16px; }\n    .tab { border-radius: 0; padding: 8px 14px 9px; border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 600; color: var(--text-2); }\n    .tab:hover { color: var(--text); background: none; }\n    .tab.active { background: none; box-shadow: none; color: var(--text); border-bottom-color: var(--tab-line); }\n    .tabs.repos .tab { border-bottom: 0; margin: 0; padding: 4px 8px; border-radius: var(--radius); border: 1px solid transparent; }\n    .tabs.repos .tab.active { border-color: var(--ctl-2); background: var(--ctl); }\n    .tab .cnt, .tag, .age, .pr .right .plink, .kbd, .hero .kicker .branch, .strip .kicker .branch { border-radius: 4px; }\n    .chip, .btn, .iconbtn, .herotoggle, .viewas select, .filters .search, .segmented, .field input { border-radius: var(--radius); background: var(--ctl); border: 1px solid var(--ctl-2); color: var(--ctl-text); box-shadow: none; }\n    .chip:hover, .iconbtn:hover, .herotoggle:hover, .btn:hover { background: var(--ctl-2); color: var(--text); transform: none; }\n    .chip.active { background: var(--prim); color: var(--prim-text); border-color: transparent; font-weight: 700; }\n    .btn.primary { background: var(--prim); color: var(--prim-text); border-color: transparent; }\n    .pill { background: transparent; border: 0; padding: 2px 4px; animation: none; font-weight: 600; }\n    .pill svg { width: 15px; height: 15px; }\n    .glyph .ring { animation: none; }\n    .glyph.failure .ring, .glyph.error .ring, .glyph.killed .ring { animation: none; opacity: .12; }\n    .tile { padding: 12px 14px; }\n    .tile .num { font-size: 22px; font-weight: 600; letter-spacing: 0; }\n    .tile.active { box-shadow: 0 0 0 2px var(--tab-line); border-color: transparent; }\n    .hero .headline, .hero-num, .metric .v, .action .ahead h3, .brand h1 { letter-spacing: 0; }\n    .hero-num, .metric .v { font-weight: 600; }\n    .action .ahead { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--sc); padding: 9px 14px; }\n    .action .ahead h3 { font-size: 16px; font-weight: 600; }\n    .action .ahead .cnt { font-weight: 600; }\n    .pr { padding: 12px 16px; }\n    .pr:hover { background: var(--ctl); }\n    .section-title h2 { color: var(--text-3); }\n    .strip { border-left-width: 3px; padding: 7px 12px; }\n    .hero-foot .hist a, .strip .hist a, .pr-detail .hist a { border-radius: 2px; }\n    .avatar::before { border-width: 1px; }\n    .rv { border-width: 2px; }\n    .live { box-shadow: none; }\n  }\n  /* Standalone in the woodpecker theme: our topbar becomes the Woodpecker navbar. */\n  &[data-theme=\"woodpecker\"]:not(.embedded) .topbar { background: var(--nav); color: var(--nav-text); margin: -24px -24px 20px; padding: 10px 24px; border-bottom: 1px solid var(--border); }\n  &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .brand h1, &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .brand h1 span, &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .refresh { color: var(--nav-text); }\n  &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .iconbtn { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.25); color: var(--nav-text); }\n  &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .iconbtn:hover { background: rgba(255,255,255,.22); }\n  &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .tabs.repos .tab { color: var(--nav-text); opacity: .85; }\n  &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .tabs.repos .tab.active { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.3); color: var(--nav-text); }\n  &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .tabs.repos .tab .cnt { background: rgba(255,255,255,.14); color: var(--nav-text); border-color: transparent; }\n  &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .refresh .ring .track { stroke: rgba(255,255,255,.35); }\n  &[data-theme=\"woodpecker\"]:not(.embedded) .topbar .refresh .ring .prog { stroke: var(--nav-text); }\n  /* Embedded in the woodpecker theme: inside Woodpecker's shell, under its navbar. */\n  &.embedded.inshell { position: static; inset: auto; overflow: visible; z-index: auto; min-height: 0; flex: 1; width: 100%; }\n  &.embedded.inshell .brand h1 { display: none; }\n  &.embedded.inshell .brand .bw-logo { width: 44px; }\n  &.embedded.inshell .wrap { padding-top: 16px; }\n  /* ---------- hero strip ---------- */\n  .section-title .herotoggle { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }\n  .section-title .herotoggle:hover { color: var(--text); border-color: var(--border-strong); }\n  .section-title .herotoggle .chev svg { transition: transform .2s; }\n  .section-title .herotoggle .chev.up svg { transform: rotate(180deg); }\n  .strips { display: grid; gap: 6px; }\n  .strip { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); border-left: 4px solid var(--sc); min-width: 0; }\n  .strip .kicker { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--text-3); white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; }\n  .strip .kicker .branch { font-family: var(--mono); text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; }\n  .strip .num { color: var(--text-2); font-size: 12px; }\n  .strip .msg { flex: 1; min-width: 80px; color: var(--text-2); font-size: 13px; }\n  .strip .fail { color: var(--bad); font-size: 12px; font-weight: 600; max-width: 320px; }\n  .strip .meta { color: var(--text-3); font-size: 12px; white-space: nowrap; }\n  .strip .hist a { width: 7px; height: 14px; }\n  .strip .hist a.cur { box-shadow: 0 0 0 3px var(--c); }\n  /* ---------- row extras ---------- */\n  .age { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 6px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }\n  .age.warm { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); }\n  .age.hot { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); background: color-mix(in srgb, var(--bad) 10%, transparent); }\n  .also { font-size: 11px; color: var(--text-3); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }\n  .also .bad { color: var(--bad); font-weight: 600; }\n  .also .warn { color: var(--warn); font-weight: 600; }\n  .also .none { color: var(--text-2); font-weight: 600; }\n  a.tag.bucket svg { width: 10px; height: 10px; }\n  a.tag.bucket:hover { text-decoration: none; filter: brightness(.92); }\n  .rvs { display: inline-flex; gap: 4px; align-items: center; margin-left: 2px; }\n  .rv { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--border-strong); background: var(--surface-2); overflow: hidden; }\n  .rv img { width: 100%; height: 100%; object-fit: cover; display: block; }\n  .rv i { font-style: normal; font-size: 9px; font-weight: 700; color: var(--text-2); }\n  .rv.asked { border-style: dashed; }\n  .rv.ok { border-color: var(--good); }\n  .rv.cr { border-color: var(--bad); }\n  .rv.cm { border-color: var(--run); }\n  .threads { margin-top: 10px; display: grid; gap: 4px; }\n  .threads .th { font-size: 12px; font-weight: 700; margin-bottom: 2px; }\n  .threads a { display: flex; gap: 10px; align-items: center; font-size: 12px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); min-width: 0; }\n  .threads a:hover { border-color: var(--border-strong); text-decoration: none; }\n  .threads a .mono { flex: 1; min-width: 0; font-size: 11.5px; }\n  /* ---------- who owes what ---------- */\n  .owes { padding: 16px 20px 12px; margin-bottom: 20px; }\n  .owes .cmp td.zero { color: var(--text-3); }\n  .owes .cmp td.n.acc { color: var(--accent); font-weight: 700; }\n  .owes .cmp td.n.warn { color: var(--warn); font-weight: 700; }\n  .owes .cmp td.n.bad { color: var(--bad); font-weight: 700; }\n  .owes .cmp td.n.good { color: var(--good); font-weight: 700; }\n  .owes tr.who { cursor: pointer; }\n  .owes tr.who:hover td { background: var(--surface-2); }\n  /* ---------- actions / view tabs / repo switcher ---------- */\n  .tabs.views { margin: 28px 0 16px; }\n  .tabs.repos { margin-bottom: 0; padding: 3px; box-shadow: none; }\n  .tabs.repos .tab { padding: 5px 10px; font-size: 12px; }\n  .ptabs { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 16px; }\n  .viewas { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); margin-left: auto; }\n  .viewas select { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }\n  .action { margin-bottom: 30px; animation: rise .4s cubic-bezier(.2,.7,.2,1) both; }\n  .action .ahead { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; padding: 11px 16px; flex-wrap: wrap; border-radius: 12px; background: color-mix(in srgb, var(--sc) 9%, var(--surface)); border: 1px solid color-mix(in srgb, var(--sc) 30%, transparent); border-left: 6px solid var(--sc); box-shadow: var(--shadow); }\n  .action .ahead .bar { display: none; }\n  .action .ahead h3 { font-size: 18px; font-weight: 800; letter-spacing: -.02em; color: var(--text); line-height: 1.2; }\n  .action .ahead .cnt { font-size: 13px; font-weight: 800; min-width: 26px; text-align: center; padding: 2px 9px; border-radius: 999px; color: #fff; background: var(--sc); }\n  .action .ahead .sub { font-size: 12.5px; color: var(--text-2); }\n  .allclear { padding: 36px; text-align: center; }\n  .allclear .big { font-size: 20px; font-weight: 700; margin-bottom: 6px; }\n  .allclear p { max-width: 520px; margin: 0 auto; }\n  .allclear button.link, .hint button.link { color: var(--accent); font-weight: 600; padding: 0; }\n  .tag.bucket { color: var(--bc); border-color: color-mix(in srgb, var(--bc) 40%, transparent); background: color-mix(in srgb, var(--bc) 9%, transparent); }\n  .tag.task { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 9%, transparent); font-weight: 700; }\n  .filters.blockers { margin-top: -6px; }\n  &.settled .action { animation: none; }\n\n  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001s !important; animation-iteration-count: 1 !important; } }\n\n  @media (max-width: 1500px) { .brand h1 span { display: none; } }\n  /* ---------- phones (≤720px) ----------\n     Everything below only re-flows what the desktop layout keeps on one line:\n     the PR row becomes avatar + text on top and a full-width status line under\n     it, tags wrap instead of overflowing, wide tables scroll inside their card. */\n  @media (max-width: 720px) {\n    .wrap { padding: 12px 12px 48px; }\n    /* top bar: brand + buttons on the first line, repo switcher + refresh clock on the second */\n    .topbar { gap: 10px; margin-bottom: 14px; }\n    .topbar .brand { margin-right: auto; }\n    .topbar .spacer { display: none; }\n    .topbar .tabs.repos { order: 10; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }\n    .topbar .tabs.repos::-webkit-scrollbar { display: none; }\n    .topbar .tabs.repos .tab { white-space: nowrap; flex: none; }\n    .topbar .tabs.repos .tab .org { display: none; }\n    .topbar .refresh { order: 11; font-size: 12px; }\n    .brand h1 { font-size: 17px; }\n    .brand .bw-logo { width: 40px; }\n    &[data-theme=\"woodpecker\"]:not(.embedded) .topbar { margin: -12px -12px 14px; padding: 8px 12px; }\n    /* section titles: heading + toggle on one line, the subtitle underneath */\n    .section-title { flex-wrap: wrap; row-gap: 2px; margin: 22px 0 10px; }\n    .section-title .sub { flex-basis: 100%; order: 3; }\n    .section-title .herotoggle { margin-left: auto; }\n    /* view tabs fill the width */\n    .tabs.views { width: 100%; margin: 20px 0 14px; }\n    .tabs.views .tab { flex: 1 1 auto; justify-content: center; padding: 8px 10px; }\n    .ptabs { gap: 8px; }\n    .viewas { margin-left: 0; width: 100%; }\n    .viewas select { flex: 1; min-width: 0; }\n    /* latest: hero cards and strips */\n    .hero { grid-template-columns: 56px 1fr; gap: 12px; padding: 16px 16px 12px; }\n    .glyph { width: 56px; height: 56px; }\n    .glyph .disc { inset: 6px; }\n    .glyph svg.icon { width: 24px; height: 24px; }\n    .hero .headline { font-size: 17px; }\n    .hero-foot { padding: 10px 16px 14px; }\n    .strip { flex-wrap: wrap; row-gap: 4px; column-gap: 8px; padding: 8px 12px; }\n    .strip .msg { flex: 1 1 100%; }\n    .strip .fail { flex: 1 1 100%; max-width: none; }\n    .strip .meta { white-space: normal; }\n    .strip .hist { margin-left: auto; }\n    /* summary tiles: three per row */\n    .tiles { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; margin-top: 16px; }\n    .tile { padding: 10px 10px; gap: 8px; border-radius: 12px; }\n    .tile .num { font-size: 22px; }\n    .tile .mark { height: 32px; width: 8px; }\n    /* filters: chips wrap, the search box takes the whole line */\n    .chip { padding: 8px 12px; }\n    .filters .search { margin-left: 0; width: 100%; padding: 9px 12px; font-size: 14px; }\n    /* action headings: title + count on one line, the subtitle underneath */\n    .action { margin-bottom: 22px; }\n    .action .ahead { padding: 10px 12px; gap: 8px 10px; }\n    .action .ahead h3 { flex: 1 1 0; min-width: 0; font-size: 17px; }\n    .action .ahead .sub { flex-basis: 100%; }\n    /* PR row: avatar | text, then a full-width status line, then the detail */\n    .pr { grid-template-columns: 40px 1fr; gap: 8px 12px; padding: 12px 14px; }\n    .avatar { width: 40px; height: 40px; }\n    .avatar img, .avatar .initials { width: 36px; height: 36px; }\n    .pr .title { flex-wrap: wrap; gap: 4px 6px; }\n    .pr .title a.truncate { flex: 1 1 100%; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.3; }\n    .also { white-space: normal; }\n    .pr .sub { gap: 6px 10px; }\n    .pr .sub .br { max-width: 100%; }\n    .pr .right { grid-column: 1 / -1; justify-self: stretch; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding-top: 2px; }\n    .pr .right .stat { margin-right: auto; text-align: left; min-width: 0; }\n    .pr .right .pill, .pr .right .plink, .pr .chev { flex: none; }\n    .pr-detail { padding: 8px 0 0; }\n    .pr-detail .rep { flex: 1 1 100%; min-width: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }\n    .pr-detail .rep .cmp { min-width: max-content; }\n    .threads a { flex-wrap: wrap; }\n    .threads a .mono { flex: 1 1 100%; }\n    /* who owes what: the table scrolls inside the card, the name column stays put */\n    .owes { padding: 14px 12px 8px; margin-bottom: 14px; }\n    .owes .cmp { font-size: 12px; }\n    .owes .cmp td, .owes .cmp th { padding: 7px 6px; }\n    .owes .cmp td:first-child, .owes .cmp th:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: 1px 0 0 var(--border); }\n    .owes tr.who:hover td:first-child { background: var(--surface-2); }\n    .ihead .links { margin-left: 0; flex-basis: 100%; }\n    /* insights: the numeric tables scroll, the bar chart keeps its label column short */\n    .insights .card { padding: 14px 14px 12px; }\n    .insights .cmp { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }\n    .bar-row { grid-template-columns: 56px 1fr 56px; gap: 6px; }\n    .hero-num { font-size: 40px; }\n    /* settings dialog */\n    dialog .dhead { padding: 16px 16px 0; }\n    dialog form { padding: 16px; }\n    .actions { flex-wrap: wrap; }\n    .actions > .faint { flex-basis: 100%; }\n    .allclear { padding: 24px 16px; }\n    .empty { padding: 28px 16px; }\n  }\n  &.embedded { position: fixed; inset: 0; overflow: auto; z-index: 1000; min-height: 0; }\n  &.embedded .standalone-only { display: none; }\n  &.settled .card, &.settled .tile, &.settled .prlist, &.settled .pr-detail { animation: none; }\n  .live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 20%, transparent); vertical-align: 1px; }\n}\n";
+  const MARKUP = "<div class=\"wrap\">\n  <a class=\"bw-logo bw-side\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Birdwatcher on GitHub\"><img alt=\"Birdwatcher\"></a>\n  <header class=\"topbar\">\n    <div class=\"brand\">\n      <a class=\"bw-logo\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Birdwatcher on GitHub\"><img alt=\"Birdwatcher\"></a>\n      <h1>Birdwatcher <span>\u00b7 Woodpecker status board</span></h1>\n    </div>\n    <nav class=\"tabs repos\" id=\"ob-repos\" hidden></nav>\n    <div class=\"spacer\"></div>\n    <div class=\"refresh\" id=\"ob-refreshBox\" title=\"Auto-refresh\">\n      <svg class=\"ring\" viewBox=\"0 0 24 24\"><circle class=\"track\" cx=\"12\" cy=\"12\" r=\"9\"/><circle class=\"prog\" id=\"ob-ringProg\" cx=\"12\" cy=\"12\" r=\"9\" stroke-dasharray=\"56.5\" stroke-dashoffset=\"0\"/></svg>\n      <span id=\"ob-updatedAt\" class=\"faint\">\u2014</span>\n    </div>\n    <button class=\"iconbtn\" id=\"ob-btnRefresh\" title=\"Refresh now (r)\" aria-label=\"Refresh\">\n      <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 12a9 9 0 1 1-2.64-6.36\"/><path d=\"M21 3v6h-6\"/></svg>\n    </button>\n    <button class=\"iconbtn\" id=\"ob-btnTheme\" title=\"Toggle theme (t)\" aria-label=\"Theme\">\n      <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3a9 9 0 1 0 9 9c0-.5 0-1-.1-1.4A5.5 5.5 0 0 1 12 3z\"/></svg>\n    </button>\n    <button class=\"iconbtn standalone-only\" id=\"ob-btnSettings\" title=\"Settings (,)\" aria-label=\"Settings\">\n      <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z\"/></svg>\n    </button>\n  </header>\n\n  <div id=\"ob-notices\"></div>\n  <section id=\"ob-hero\"></section>\n  <nav class=\"tabs\" id=\"ob-tabs\" hidden></nav>\n  <main id=\"ob-content\"></main>\n</div>\n\n<dialog id=\"ob-settings\">\n  <div class=\"dhead\">\n    <h3>Connection</h3>\n    <p>Tokens are stored only in this browser's <span class=\"mono\">localStorage</span> and used directly from the page. Inside Woodpecker only the optional GitHub token applies: builds, PRs and reports come through your Woodpecker session.</p>\n  </div>\n  <form method=\"dialog\" id=\"ob-settingsForm\">\n    <div class=\"field standalone-only\">\n      <label for=\"ob-fServer\">Woodpecker server</label>\n      <input id=\"ob-fServer\" placeholder=\"https://woodpecker.example.com\" autocomplete=\"off\" spellcheck=\"false\">\n    </div>\n    <div class=\"field standalone-only\">\n      <label for=\"ob-fWp\">Woodpecker personal access token</label>\n      <input id=\"ob-fWp\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\">\n      <div class=\"hint\">Woodpecker UI \u2192 your avatar \u2192 <b>Settings \u2192 API</b>. Needs read access to the repos.</div>\n    </div>\n    <div class=\"field standalone-only\">\n      <label for=\"ob-fGh\">GitHub token <span class=\"faint\">(optional)</span></label>\n      <input id=\"ob-fGh\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"github_pat_\u2026 or ghp_\u2026\">\n      <div class=\"hint\">Fine-grained token with <b>Pull requests: read</b> on the repos, or a classic token with <span class=\"mono\">repo</span> scope. Adds head-commit freshness (Head / Outdated build) and avatars for PRs that never ran CI; the open-PR list and the CI report tables work without it.</div>\n    </div>\n    <div class=\"field standalone-only\">\n      <label for=\"ob-fViewer\">Your GitHub login <span class=\"faint\">(optional)</span></label>\n      <input id=\"ob-fViewer\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"taken from the GitHub token when empty\">\n      <div class=\"hint\">Who the <b>Actions</b> tab plans for. Inside Woodpecker this is always the logged-in user.</div>\n    </div>\n    <div class=\"field standalone-only\">\n      <label for=\"ob-fPg\">Reports base URL <span class=\"faint\">(optional)</span></label>\n      <input id=\"ob-fPg\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"leave empty \u2014 auto when the board is opened from the reports host\">\n      <div class=\"hint\" style=\"border:0;padding:0;margin-top:6px;font-size:12px;color:var(--text-3)\">Benchmarks, coverage and the nightly report are read from the reports host. When this page is served from that host itself the browser reuses its Basic-Auth session and nothing needs configuring here.</div>\n    </div>\n    <div class=\"actions\">\n      <span class=\"faint\" style=\"margin-right:auto;font-size:12px\">Shortcuts: <span class=\"kbd\">r</span> refresh \u00b7 <span class=\"kbd\">t</span> theme \u00b7 <span class=\"kbd\">,</span> settings</span>\n      <button type=\"button\" class=\"btn\" id=\"ob-btnCancel\">Cancel</button>\n      <button type=\"submit\" class=\"btn primary\">Save &amp; reload</button>\n    </div>\n  </form>\n</dialog>\n";
+  const LOGO = 'data:image/webp;base64,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';
+  'use strict';
+  // ---------------------------------------------------------------- environment
+  // Two ways to run:
+  //  * embedded  — loaded by Woodpecker as WOODPECKER_CUSTOM_JS_FILE on every UI
+  //                page. Renders the board only at <root><boardPath>, elsewhere
+  //                just adds a nav link. API calls ride on the Woodpecker session;
+  //                the reports data and GitHub (open PRs, mergeability, CI
+  //                comments) come through same-origin proxies (reports.proxyPath
+  //                and /github/).
+  //  * standalone — index.html (served from the reports host or opened locally).
+  //                Tokens live in localStorage.
+  const RP = (window.WOODPECKER_ROOT_PATH || '').replace(/\/+$/, '');
+  const EMBEDDED = typeof window.WOODPECKER_VERSION === 'string';
+  // Site settings (config.js, see config.example.js). Every key is optional.
+  const SITE = window.BIRDWATCHER_CONFIG || {};
+  const NAV_LABEL = SITE.navLabel || 'Birdwatcher';
+  const BOARD_ROUTE = SITE.boardPath || '/birdwatcher';
+  const BOARD_PATH = RP + BOARD_ROUTE;
+  const HOME = 'https://github.com/LaGrunge/birdwatcher';
+  const GH_PROXY = RP + '/github';   // same-origin proxy → api.github.com (embedded only)
+  const LS = 'wp-status-board';
+  const DEFAULT_SERVER = (SITE.server || '').replace(/\/+$/, '');
+  const PRIMARY_REPO = SITE.primaryRepo || '';    // listed first; the only repo with the Main tab
+  const LOGIN_PREFIX = SITE.loginPrefix || '';    // stripped from logins for display
+  const shortLogin = l => LOGIN_PREFIX && (l || '').startsWith(LOGIN_PREFIX) ? l.slice(LOGIN_PREFIX.length) : (l || '');
+  const MARKERS = { bench: 'ci-report', cov: 'coverage-report', ...(SITE.reportMarkers || {}) };
+  // The reports host: benchmark baseline, lcov baseline, nightly report. Off when unset.
+  const REPORTS = SITE.reports || {};
+  const REPORTS_NAME = REPORTS.name || 'the reports host';
+  const REPORTS_HOST = REPORTS.host || '';
+  const REPORTS_PUBLIC = REPORTS_HOST ? 'https://' + REPORTS_HOST : '';
+  const PG = REPORTS.paths || {};
+  // Ticket links: project key → browse URL prefix.
+  const TRACKERS = SITE.trackers || {};
+  // @matrix-begin
+  const REFRESH_SEC = 60;        // polling period without a live event stream
+  const REFRESH_LIVE_SEC = 300;  // safety-net poll while the SSE stream is connected
+  const PR_PAGES_MAX = 16;     // 16 × 50 pipelines deep when hunting for stale PRs
+  const HISTORY = 12;
+  const SILENT_DAYS = 2;       // a requested review with no answer for this long = "reviewers silent"
+  const DORMANT_DAYS = 14;     // no author activity for this long = "revive or close"
+  const META_PARALLEL = 10;    // concurrent GitHub per-PR requests (mergeability, timeline, threads)
+  const RENDER_MIN_MS = 250;   // renders are coalesced to this while data streams in
+  const NIGHTS = 14;
+  // @matrix-end
+
+  if (EMBEDDED && location.pathname.replace(/\/+$/, '') !== BOARD_PATH) { injectNavLink(); return; }
+
+  // ---------------------------------------------------------------- nav link (embedded, other pages)
+  function injectNavLink() {
+    const tryInject = () => {
+      if (document.getElementById('birdwatcher-link')) return true;
+      const repos = [...document.querySelectorAll('nav a, header a')].find(a => (a.getAttribute('href') || '').replace(/\/+$/, '') === RP + '/repos');
+      if (!repos) return false;
+      const a = repos.cloneNode(false);
+      a.id = 'birdwatcher-link'; a.href = BOARD_PATH; a.textContent = NAV_LABEL;
+      a.removeAttribute('aria-current');
+      a.className = repos.className.replace(/router-link-(exact-)?active/g, '').trim();
+      repos.after(a);
+      return true;
+    };
+    tryInject();
+    new MutationObserver(() => tryInject()).observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  // ---------------------------------------------------------------- mount
+  const root = document.createElement('div');
+  root.id = 'birdwatcher';
+  root.innerHTML = MARKUP;
+  root.querySelectorAll('.bw-logo').forEach(a => { a.href = HOME; a.querySelector('img').src = LOGO; });
+  const FONTS = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap';
+  if (!document.querySelector(`link[href="${FONTS}"]`)) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = FONTS; document.head.appendChild(l); }
+  const style = document.createElement('style');
+  style.textContent = CSS;
+  document.head.appendChild(style);
+  if (EMBEDDED) { root.classList.add('embedded'); document.title = 'Birdwatcher · CI status board'; }
+  document.body.appendChild(root);   // applyTheme() (after loadCfg) may move it into Woodpecker's shell
+  const el = name => root.querySelector('#ob-' + name);
+  const $ = (sel, r = root) => r.querySelector(sel);
+
+  const ICONS = {
+    check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    spin: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.56"/></svg>',
+    clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>',
+    skip: '<svg viewBox="0 0 24 24"><path d="M5 5l7 7-7 7M13 5l7 7-7 7"/></svg>',
+    dash: '<svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg>',
+    lock: '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+    warn: '<svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>',
+    chev: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+    ext: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>',
+    // theme button: sun (light), moon (dark), the Woodpecker bird (woodpecker theme; path from Woodpecker's favicon)
+    sun: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+    moon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9c0-.5 0-1-.1-1.4A5.5 5.5 0 0 1 12 3z"/></svg>',
+    bird: '<svg width="18" height="18" viewBox="0 0 22 22" fill="currentColor"><path d="M1.263 2.744C2.41 3.832 2.845 4.932 4.118 5.08l.036.007c-.588.606-1.09 1.402-1.443 2.423-.38 1.096-.488 2.285-.614 3.659-.19 2.046-.401 4.364-1.556 7.269-2.486 6.258-1.12 11.63.332 17.317.664 2.604 1.348 5.297 1.642 8.107a.857.857 0 00.633.744.86.86 0 00.922-.323c.227-.313.524-.797.86-1.424.84 3.323 1.355 6.13 1.783 8.697a.866.866 0 001.517.41c2.88-3.463 3.763-8.636 2.184-12.674.459-2.433 1.402-4.45 2.398-6.583.536-1.15 1.08-2.318 1.55-3.566.228-.084.569-.314.79-.441l1.707-.981-.256 1.052a.864.864 0 001.678.408l.68-2.858 1.285-2.95a.863.863 0 10-1.581-.687l-1.152 2.669-2.383 1.372a18.97 18.97 0 00.508-2.981c.432-4.86-.718-9.074-3.066-11.266-.163-.157-.208-.281-.247-.26.095-.12.249-.26.358-.374 2.283-1.693 6.047-.147 8.319.75.589.232.876-.337.316-.67-1.95-1.153-5.948-4.196-8.188-6.193-.313-.275-.527-.607-.89-.913C9.825.555 4.072 3.057 1.355 2.569c-.102-.018-.166.103-.092.175m10.98 5.899c-.06 1.242-.603 1.8-1 2.208-.217.224-.426.436-.524.738-.236.714.008 1.51.66 2.143 1.974 1.84 2.925 5.527 2.538 9.86-.291 3.288-1.448 5.763-2.671 8.385-1.031 2.207-2.096 4.489-2.577 7.259a.853.853 0 00.056.48c1.02 2.434 1.135 6.197-.672 9.46a96.586 96.586 0 00-1.97-8.711c1.964-4.488 4.203-11.75 2.919-17.668-.325-1.497-1.304-3.276-2.387-4.207-.208-.18-.402-.237-.495-.167-.084.06-.151.238-.062.444.55 1.266.879 2.599 1.226 4.276 1.125 5.443-.956 12.49-2.835 16.782l-.116.259-.457.982c-.356-2.014-.85-3.95-1.33-5.84-1.38-5.406-2.68-10.515-.401-16.254 1.247-3.137 1.483-5.692 1.672-7.746.116-1.263.216-2.355.526-3.252.905-2.605 3.062-3.178 4.744-2.852 1.632.316 3.24 1.593 3.156 3.42zm-2.868.62a1.177 1.177 0 10.736-2.236 1.178 1.178 0 10-.736 2.237z"/></svg>',
+  };
+
+  // One status vocabulary for the whole board. `bucket` drives filters and tiles.
+  // @matrix-begin (tests/matrix_test.js evaluates the marked regions in node)
+  const STATUS = {
+    success:  { label: 'Passing',  color: 'var(--good)', icon: 'check', bucket: 'green' },
+    failure:  { label: 'Failed',   color: 'var(--bad)',  icon: 'x',     bucket: 'red' },
+    error:    { label: 'Error',    color: 'var(--bad)',  icon: 'warn',  bucket: 'red' },
+    killed:   { label: 'Killed',   color: 'var(--bad)',  icon: 'x',     bucket: 'red' },
+    canceled: { label: 'Canceled', color: 'var(--none)', icon: 'x',     bucket: 'other' },
+    running:  { label: 'Running',  color: 'var(--run)',  icon: 'spin',  bucket: 'running' },
+    started:  { label: 'Running',  color: 'var(--run)',  icon: 'spin',  bucket: 'running' },
+    pending:  { label: 'Queued',   color: 'var(--warn)', icon: 'clock', bucket: 'waiting' },
+    blocked:  { label: 'Approval', color: 'var(--warn)', icon: 'lock',  bucket: 'waiting' },
+    skipped:  { label: 'Skipped',  color: 'var(--none)', icon: 'skip',  bucket: 'other' },
+    declined: { label: 'Declined', color: 'var(--none)', icon: 'x',     bucket: 'other' },
+    none:     { label: 'No build', color: 'var(--none)', icon: 'dash',  bucket: 'nobuild' },
+  };
+  const st = s => STATUS[s] || STATUS.none;
+  const statusOf = p => p ? (STATUS[p.status] ? p.status : 'none') : 'none';
+  const LIVE = ['running', 'started', 'pending', 'blocked'];
+  // A cancelled pipeline that a newer one on the same branch / PR followed was
+  // superseded (the repo's cancel_previous_pipeline_events): its verdict is
+  // lost, so it is dropped instead of painted as a red mark. Only the newest
+  // run keeps a killed / canceled status — that one really was cancelled.
+  // `runs` is newest first.
+  const SUPERSEDABLE = ['killed', 'canceled'];
+  const dropSuperseded = runs => runs.filter((p, i) => i === 0 || !SUPERSEDABLE.includes(p.status));
+  // @matrix-end
+
+  const VIEWS = ['actions', 'prs', 'main'];
+  const state = {
+    cfg: { server: DEFAULT_SERVER, wpToken: '', ghToken: '', reportsBase: '', viewer: '' },
+    repos: [], data: {}, insights: null, insightsP: null, tab: null, view: 'actions', filter: 'all', search: '',
+    viewer: '',          // the login the Actions tab plans for (session user unless "view as" overrides it)
+    heroOpen: false,     // hero cards expanded (default: the compact strip)
+    viewAs: '',
+    timer: null, left: REFRESH_SEC, loading: false, renderQueued: false,
+    stream: null, live: false, pending: new Set(), pendingTimer: null, lastSig: '',
+  };
+
+  // ---------------------------------------------------------------- utils
+  // Anything that goes into href/src: http(s) only, so a hostile field can never become javascript:/data:.
+  const safeUrl = u => /^https?:\/\//i.test(String(u || '')) ? String(u) : '';
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const firstLine = s => String(s || '').split('\n')[0].trim();
+  const now = () => Math.floor(Date.now() / 1000); // @matrix-line
+  function ago(ts) {
+    if (!ts) return '';
+    const d = now() - ts;
+    if (d < 45) return 'just now';
+    if (d < 3600) return `${Math.round(d / 60)}m ago`;
+    if (d < 86400) return `${Math.round(d / 3600)}h ago`;
+    if (d < 86400 * 14) return `${Math.round(d / 86400)}d ago`;
+    return new Date(ts * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  const agoEl = (ts, prefix = '') => `<span data-ago="${ts}" data-prefix="${esc(prefix)}">${esc(prefix)}${ago(ts)}</span>`;
+  function refreshAgo() { root.querySelectorAll('[data-ago]').forEach(e => { e.textContent = (e.dataset.prefix || '') + ago(+e.dataset.ago); }); }
+  function until(ts) {
+    const d = ts - now();
+    if (d <= 0) return 'due now';
+    if (d < 3600) return `in ${Math.round(d / 60)}m`;
+    if (d < 86400) return `in ${Math.round(d / 3600)}h`;
+    return `in ${Math.round(d / 86400)}d`;
+  }
+  function dur(p) {
+    if (!p || !p.started) return '';
+    const end = p.finished || now();
+    const s = Math.max(0, end - p.started);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    if (h) return `${h}h ${m}m`;
+    if (m) return `${m}m ${s % 60}s`;
+    return `${s}s`;
+  }
+  const prNumOf = p => { const m = /refs\/pull\/(\d+)\//.exec(p.ref || ''); return m ? +m[1] : null; };
+  const isDNM = title => /\b(DNM|DO NOT MERGE|WIP)\b/i.test(title || '') || /\[do not merge\]|\(do not merge\)/i.test(title || ''); // @matrix-line
+  // Ticket links. A key like PROJ-107 in the title or the branch name links to
+  // its tracker; the project key picks the tracker (SITE.trackers), so this
+  // works for every repo the board shows. Keys of unknown projects are left
+  // alone — "ALL-3 nodes" in a title is not a ticket.
+  function tickets(pr) {
+    const out = new Map();
+    for (const text of [pr.title || '', (pr.head || '').replace(/[/_]/g, ' ')]) for (const m of text.matchAll(/\b([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,7})\b/g)) {
+      const key = m[1].toUpperCase(), base = TRACKERS[key];
+      if (base && !out.has(`${key}-${m[2]}`)) out.set(`${key}-${m[2]}`, base + `${key}-${m[2]}`);
+    }
+    return [...out];
+  }
+  const initials = name => (shortLogin(name) || '?').replace(/([a-z])([A-Z])/g, '$1 $2').split(/[\s\-_]+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const b64utf8 = b => { try { return new TextDecoder().decode(Uint8Array.from(atob(b), c => c.charCodeAt(0))); } catch { return ''; } };
+  const tsOf = iso => iso ? Math.floor(new Date(iso) / 1000) : 0;
+  // Run fn over items with at most n in flight; results in order, rejections kept as null.
+  async function pmap(items, n, fn) {
+    const out = new Array(items.length); let i = 0;
+    await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (i < items.length) { const k = i++; try { out[k] = await fn(items[k], k); } catch { out[k] = null; } }
+    }));
+    return out;
+  }
+
+  // ---------------------------------------------------------------- persistent cache
+  // Everything expensive to refetch, keyed so that a change invalidates it:
+  //   repos  — the last repo list (hero cards start before /user/repos answers)
+  //   pipes  — per PR: head sha + latest CI runs (skips the deep pipeline scan)
+  //   merge  — per PR: mergeability, valid for (head sha, updated_at, main commit)
+  //   meta   — per PR: the folded review timeline, valid for (head sha, updated_at)
+  const PC_KEY = LS + ':cache';
+  const pc = { repos: null, pipes: {}, merge: {}, meta: {} };
+  try { Object.assign(pc, JSON.parse(localStorage.getItem(PC_KEY) || '{}')); } catch {}
+  let pcTimer = null;
+  function pcSave() {
+    clearTimeout(pcTimer);
+    pcTimer = setTimeout(() => {
+      try { localStorage.setItem(PC_KEY, JSON.stringify(pc)); }
+      catch { pc.pipes = {}; pc.meta = {}; pc.merge = {}; try { localStorage.removeItem(PC_KEY); } catch {} }
+    }, 800);
+  }
+  function pcPrune(repoId, liveNumbers) {
+    const keep = new Set(liveNumbers.map(n => `${repoId}/${n}`));
+    for (const m of [pc.pipes, pc.merge, pc.meta]) for (const k of Object.keys(m)) if (k.startsWith(`${repoId}/`) && !keep.has(k)) delete m[k];
+  }
+  // The fields the board reads from a Woodpecker pipeline; the rest is dropped before caching.
+  const PIPE_FIELDS = ['number', 'status', 'event', 'ref', 'refspec', 'commit', 'created', 'started', 'finished', 'title', 'message', 'author', 'author_avatar', 'forge_url', 'pr_draft', 'errors', 'sender', 'branch'];
+  const trimPipe = p => { if (!p) return null; const o = {}; for (const f of PIPE_FIELDS) if (p[f] !== undefined) o[f] = f === 'errors' ? (p.errors || []).map(() => 1) : p[f]; return o; };
+
+  // ---------------------------------------------------------------- config / theme
+  function loadCfg() {
+    try { Object.assign(state.cfg, JSON.parse(localStorage.getItem(LS) || '{}')); } catch {}
+    state.cfg.server = EMBEDDED ? location.origin + RP : (state.cfg.server || DEFAULT_SERVER).replace(/\/+$/, '');
+    if (EMBEDDED) state.cfg.ghToken = ''; // inside Woodpecker everything rides on the session; no personal tokens
+    try { state.tab = localStorage.getItem(LS + ':tab'); } catch {}
+    try { const v = localStorage.getItem(LS + ':view'); if (VIEWS.includes(v)) state.view = v; } catch {}
+    try { state.heroOpen = localStorage.getItem(LS + ':hero') === 'open'; } catch {}
+    try { const t = localStorage.getItem(LS + ':theme'); if (t) root.dataset.theme = t; } catch {}
+    state.viewer = EMBEDDED ? (window.WOODPECKER_USER?.login || '') : (state.cfg.viewer || '');
+  }
+  function setView(v) {
+    if (!VIEWS.includes(v)) return;
+    state.view = v;
+    try { localStorage.setItem(LS + ':view', v); } catch {}
+    if (v === 'main') ensureInsights();
+    render(true);
+  }
+  function saveCfg() { try { localStorage.setItem(LS, JSON.stringify(state.cfg)); } catch {} }
+  // Three themes on one button: light → dark → woodpecker → light. The
+  // woodpecker theme takes Woodpecker's own palette (its --wp-* variables when
+  // embedded, the same values as fallbacks standalone) and, embedded, keeps the
+  // real Woodpecker navbar and sits where the router view would be.
+  const THEMES = ['light', 'dark', 'woodpecker'];
+  const THEME_ICON = { light: 'sun', dark: 'moon', woodpecker: 'bird' };
+  const THEME_LABEL = { light: 'Light', dark: 'Dark', woodpecker: 'Woodpecker' };
+  const curTheme = () => root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  function toggleTheme() {
+    const next = THEMES[(THEMES.indexOf(curTheme()) + 1) % THEMES.length];
+    root.dataset.theme = next;
+    try { localStorage.setItem(LS + ':theme', next); } catch {}
+    applyTheme();
+  }
+  function applyTheme() {
+    const t = curTheme(), btn = el('btnTheme');
+    btn.innerHTML = ICONS[THEME_ICON[t]];
+    btn.title = `Theme: ${THEME_LABEL[t]} · click for ${THEME_LABEL[THEMES[(THEMES.indexOf(t) + 1) % THEMES.length]]} (t)`;
+    root.classList.toggle('wp', t === 'woodpecker');
+    if (EMBEDDED) placeEmbedded(t === 'woodpecker');
+  }
+  // Embedded placement. Default: Woodpecker's app is hidden and the board is a
+  // fixed full-page layer. Woodpecker theme: the app stays, its navbar stays,
+  // only the router view (main) is hidden and the board takes its place.
+  let placeObserver = null;
+  function placeEmbedded(inShell) {
+    const app = document.getElementById('app');
+    if (!app) { document.body.appendChild(root); return; }
+    const settle = () => {
+      const nav = app.querySelector('nav, header');
+      const shell = nav?.parentElement;
+      if (!inShell || !nav || !shell) return false;
+      shell.querySelectorAll(':scope > main').forEach(m => { m.hidden = true; m.dataset.obHidden = '1'; });
+      if (root.parentElement !== shell || root.previousElementSibling !== nav) nav.after(root);
+      return true;
+    };
+    if (inShell) {
+      app.style.display = '';
+      root.classList.add('inshell');
+      if (!settle()) { app.style.display = 'none'; root.classList.remove('inshell'); document.body.appendChild(root); }
+      if (!placeObserver) { placeObserver = new MutationObserver(() => settle()); placeObserver.observe(app, { childList: true, subtree: true }); }
+    } else {
+      if (placeObserver) { placeObserver.disconnect(); placeObserver = null; }
+      app.querySelectorAll('[data-ob-hidden]').forEach(m => { m.hidden = false; delete m.dataset.obHidden; });
+      app.style.display = 'none';
+      root.classList.remove('inshell');
+      if (root.parentElement !== document.body) document.body.appendChild(root);
+    }
+  }
+
+  // ---------------------------------------------------------------- API
+  class ApiError extends Error { constructor(msg, status, who) { super(msg); this.status = status; this.who = who; } }
+  async function wp(path) {
+    const init = EMBEDDED
+      ? { credentials: 'same-origin', headers: { Accept: 'application/json' } }
+      : { credentials: 'omit', headers: { Authorization: `Bearer ${state.cfg.wpToken}` } };
+    const r = await fetch(state.cfg.server + '/api' + path, init);
+    if (!r.ok) throw new ApiError(`Woodpecker ${r.status} on ${path}`, r.status, 'woodpecker');
+    return r.json();
+  }
+  const ghEnabled = () => EMBEDDED || !!state.cfg.ghToken;
+  async function gh(path) {
+    const r = EMBEDDED
+      ? await fetch(GH_PROXY + path, { credentials: 'same-origin', headers: { Accept: 'application/vnd.github+json' } })
+      : await fetch('https://api.github.com' + path, { headers: { Authorization: `Bearer ${state.cfg.ghToken}`, Accept: 'application/vnd.github+json' } });
+    if (!r.ok) throw new ApiError(`GitHub ${r.status} on ${path}`, r.status, 'github');
+    return r.json();
+  }
+  async function ghAll(path) {
+    const out = [];
+    for (let page = 1; page <= 10; page++) {
+      const chunk = await gh(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
+      out.push(...chunk);
+      if (chunk.length < 100) break;
+    }
+    return out;
+  }
+  // Open PRs straight from Woodpecker (it asks the forge with its own token):
+  // only number + title, the rest is joined from the PR pipelines.
+  async function wpOpenPRs(repoId) {
+    const out = [];
+    for (let page = 1; page <= 6; page++) {
+      const chunk = await wp(`/repos/${repoId}/pull_requests?per_page=50&page=${page}`);
+      out.push(...(chunk || []));
+      if (!chunk || chunk.length < 50) break;
+    }
+    return out.map(p => ({ number: +p.index, title: p.title }));
+  }
+  // Mergeability is only on the per-PR endpoint and GitHub computes it lazily
+  // (null until done), so cache per head sha and re-ask nulls on the next pass.
+  // Conflicts appear when main moves, not only when the PR does, so the main
+  // commit is part of the key. Persisted across reloads.
+  async function mergeInfo(repo, pr, mainCommit = '') {
+    const k = `${repo.id}/${pr.number}`, c = pc.merge[k], t = now();
+    const ci = statusOf(pr.pipe);
+    const fresh = c && c.sha === pr.headSha && c.updated === pr.updated && c.main === mainCommit && c.ci === ci && t - c.at < 3600;
+    if (fresh && (c.mergeable !== null || t - c.at < 45)) { pr.mergeable = c.mergeable; pr.mergeState = c.state; return; }
+    try {
+      const d = await gh(`/repos/${repo.full_name}/pulls/${pr.number}`);
+      const e = { sha: pr.headSha, updated: pr.updated, main: mainCommit, ci, mergeable: d.mergeable, state: d.mergeable_state, at: t };
+      pc.merge[k] = e; pcSave(); pr.mergeable = e.mergeable; pr.mergeState = e.state;
+    } catch { if (c) { pr.mergeable = c.mergeable; pr.mergeState = c.state; } }
+  }
+
+  // ---------------------------------------------------------------- review state (GitHub issue timeline)
+  // One request per PR gives commits, force-pushes, reviews, review requests,
+  // ready-for-review flips and comments. Folded into a small `pr.rv` record that
+  // classify() turns into "what blocks this PR and who has to move".
+  // Noise that must not count as review activity: bot accounts (code-review
+  // and gate bots), the CI account's report comments (recognised by the
+  // <!-- *-report --> markers, not by login) and slash commands.
+  // Automation logins: any login that ever posted a report comment (the CI
+  // account also narrates pushes as plain comments; none of that is review
+  // feedback). Learned across PRs, persisted with the cache — and applied to
+  // plain issue comments ONLY. The CI posts its reports with a human's token,
+  // so that human's reviews, review requests and inline threads are theirs:
+  // a bot never submits a verdict, and nobody can request a review from one.
+  // @timeline-begin
+  const isReport = body => /<!-- [\w-]+-report -->/.test(body || '');
+  pc.automation = Array.isArray(pc.automation) ? pc.automation : [];
+  const automation = new Set(pc.automation);
+  const isBot = u => !u || u.type === 'Bot' || /\[bot\]$/.test(u.login || '');
+  const isNoise = u => isBot(u) || automation.has(u?.login);   // plain comments only
+  const isCommand = body => /^\s*\//.test(body || '');
+  function summarizeTimeline(events, pr) {
+    const rv = { loaded: true, lastPush: 0, lastFeedback: 0, lastAuthorActivity: 0, readySince: 0, requestedAt: {}, reviews: {}, avatars: {}, approved: false, changesRequested: false };
+    const max = (a, b) => (b > a ? b : a);
+    for (const e of events) if (e.event === 'commented' && isReport(e.body) && e.actor?.login && !automation.has(e.actor.login)) { automation.add(e.actor.login); pc.automation = [...automation]; pcSave(); }
+    for (const e of events) {
+      const actor = e.actor || e.user || null, login = actor?.login || '';
+      switch (e.event) {
+        case 'committed': rv.lastPush = max(rv.lastPush, tsOf(e.committer?.date || e.author?.date)); break;
+        case 'head_ref_force_pushed': rv.lastPush = max(rv.lastPush, tsOf(e.created_at)); break;
+        case 'ready_for_review': rv.readySince = tsOf(e.created_at); if (login === pr.author) rv.lastAuthorActivity = max(rv.lastAuthorActivity, rv.readySince); break;
+        case 'convert_to_draft': rv.readySince = 0; break;
+        case 'review_requested': if (e.requested_reviewer?.login) { rv.requestedAt[e.requested_reviewer.login] = tsOf(e.created_at); if (e.requested_reviewer.avatar_url) rv.avatars[e.requested_reviewer.login] = e.requested_reviewer.avatar_url + '&s=64'; } break;
+        case 'review_request_removed': if (e.requested_reviewer?.login) delete rv.requestedAt[e.requested_reviewer.login]; break;
+        case 'reviewed': {
+          if (isBot(e.user)) break;
+          const at = tsOf(e.submitted_at), s = String(e.state || '').toLowerCase();
+          if (login === pr.author) { rv.lastAuthorActivity = max(rv.lastAuthorActivity, at); break; }
+          const prev = rv.reviews[login];
+          if (e.user?.avatar_url) rv.avatars[login] = e.user.avatar_url + '&s=64';
+          // A plain comment never downgrades an earlier approve / changes-requested.
+          rv.reviews[login] = { state: (s === 'commented' && prev && prev.state !== 'commented') ? prev.state : s, at, stateAt: s === 'commented' && prev ? prev.stateAt : at };
+          rv.lastFeedback = max(rv.lastFeedback, at);
+          break;
+        }
+        case 'commented': {
+          if (isNoise(actor) || isReport(e.body) || isCommand(e.body)) break;
+          const at = tsOf(e.created_at);
+          if (login === pr.author) rv.lastAuthorActivity = max(rv.lastAuthorActivity, at); else rv.lastFeedback = max(rv.lastFeedback, at);
+          break;
+        }
+      }
+    }
+    rv.lastAuthorActivity = max(rv.lastAuthorActivity, rv.lastPush); // pushing is the author moving
+    const states = Object.values(rv.reviews).map(r => r.state);
+    rv.changesRequested = states.includes('changes_requested');
+    // When the newest still-standing changes-requested verdict was cast. GitHub
+    // keeps that verdict until the reviewer re-reviews, so it alone can't mean
+    // "the author owes something": what matters is whether the author has moved since.
+    rv.changesRequestedAt = Math.max(0, ...Object.values(rv.reviews).filter(r => r.state === 'changes_requested').map(r => r.stateAt || r.at));
+    rv.approved = states.includes('approved') && !rv.changesRequested;
+    return rv;
+  }
+  // Inline review threads (pulls/N/comments). Every thread has to be answered
+  // by the author: a thread whose last human word is a reviewer's is open. The
+  // REST API doesn't expose "resolved", so an answer is the only way to close one here.
+  function summarizeThreads(comments, pr) {
+    const threads = new Map();
+    for (const c of comments) {
+      if (isBot(c.user)) continue;
+      const root = c.in_reply_to_id || c.id;
+      if (!threads.has(root)) threads.set(root, []);
+      threads.get(root).push(c);
+    }
+    const open = [];
+    for (const list of threads.values()) {
+      list.sort((a, b) => tsOf(a.created_at) - tsOf(b.created_at));
+      const last = list[list.length - 1], root = list[0];
+      if (last.user?.login !== pr.author) open.push({ url: safeUrl(last.html_url || root.html_url), path: root.path || '', line: root.line || root.original_line || null, who: last.user?.login || '', at: tsOf(last.created_at), n: list.length });
+    }
+    open.sort((a, b) => a.at - b.at);
+    return { threads: threads.size, openThreads: open.length, openList: open.slice(0, 30) };
+  }
+  // @timeline-end
+  async function ghPages(path, max = 3) {
+    const out = [];
+    for (let page = 1; page <= max; page++) {
+      const chunk = await gh(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
+      out.push(...chunk);
+      if (chunk.length < 100) break;
+    }
+    return out;
+  }
+  // updated_at moves on every push, review, request and comment, so (sha, updated) is a safe key. Persisted.
+  // Bump RV_FOLD whenever summarizeTimeline / summarizeThreads change what they
+  // fold: a cached record from the old fold is wrong for up to 6 h otherwise.
+  const RV_FOLD = 3;
+  async function prTimeline(repo, pr) {
+    const k = `${repo.id}/${pr.number}`, c = pc.meta[k], t = now();
+    if (c && c.fold === RV_FOLD && c.sha === pr.headSha && c.updated === pr.updated && t - c.at < 6 * 3600) { pr.rv = c.rv; return; }
+    try {
+      const [events, comments] = await Promise.all([
+        ghPages(`/repos/${repo.full_name}/issues/${pr.number}/timeline`),
+        ghPages(`/repos/${repo.full_name}/pulls/${pr.number}/comments`).catch(() => []),
+      ]);
+      const rv = Object.assign(summarizeTimeline(events, pr), summarizeThreads(comments, pr));
+      pc.meta[k] = { fold: RV_FOLD, sha: pr.headSha, updated: pr.updated, rv, at: t }; pcSave();
+      pr.rv = rv;
+    } catch { if (c) pr.rv = c.rv; }
+  }
+
+  // The blocker matrix. First matching rule wins; `who` is the role that has to act.
+  // @matrix-begin
+  const BUCKETS = {
+    'draft-red':         { who: 'author',   label: 'Draft · CI red',       imp: 'Fix the build or close it',                  sub: 'drafts whose latest pipeline failed', color: 'var(--bad)' },
+    'ready-red':         { who: 'author',   label: 'CI red',               imp: 'Fix CI on a PR that asks for review',        sub: 'ready for review, but the build is red', color: 'var(--bad)' },
+    'no-ci':             { who: 'author',   label: 'No CI on head',        imp: 'Push or rerun CI on the current head',       sub: 'no pipeline for the head commit, or a skipped / cancelled one', color: 'var(--warn)' },
+    'draft-noci':        { who: 'author',   label: 'Draft · no CI',        imp: 'Run CI on the draft, or close it',           sub: 'drafts with no pipeline on the head commit', color: 'var(--none)' },
+    'ci-blocked':        { who: 'admin',    label: 'Pipeline approval',    imp: 'Approve the pipeline in Woodpecker',         sub: 'CI is waiting for a manual approval', color: 'var(--warn)' },
+    'dormant':           { who: 'author',   label: 'Dormant',              imp: `Revive or close: nothing from the author for ${DORMANT_DAYS}+ days`, sub: 'no push, comment or status change by the author', color: 'var(--none)' },
+    'retarget':          { who: 'author',   label: 'Base gone',            imp: 'Retarget to main and rebase: the base PR is gone', sub: 'stacked on a branch that no open PR carries any more', color: 'var(--warn)' },
+    'conflicts':         { who: 'author',   label: 'Conflicts',            imp: 'Rebase: conflicts with main',                sub: 'nobody reviews or merges conflicting code', color: 'var(--bad)' },
+    'approved-behind':   { who: 'author',   label: 'Approved · behind',    imp: 'Rebase: approved but behind main',           sub: 'the review is done, the branch is behind its base', color: 'var(--warn)' },
+    'approved-merge':    { who: 'author',   label: 'Approved',             imp: 'Merge it',                                   sub: 'approved, green and mergeable', color: 'var(--good)' },
+    'approved-blocked':  { who: 'author',   label: 'Approved · blocked',   imp: 'Get the missing approval or check: GitHub still blocks the merge', sub: 'approved and green, but branch protection is not satisfied', color: 'var(--warn)' },
+    'awaiting-author':   { who: 'author',   label: 'Awaiting author',      imp: 'Answer every review comment',                sub: 'open review threads, or the latest word is the reviewer’s', color: 'var(--warn)' },
+    'no-reviewer':       { who: 'author',   label: 'No reviewer',          imp: 'Request a reviewer',                         sub: 'ready for review, nobody asked', color: 'var(--warn)' },
+    'reviewers-silent':  { who: 'author',   label: 'Reviewers silent',     imp: `Ping the reviewers: no review for ${SILENT_DAYS}+ days`, sub: 'requested, still unanswered', color: 'var(--warn)' },
+    'draft-green':       { who: 'author',   label: 'Draft · CI green',     imp: 'Mark ready for review, or close it',         sub: 'drafts whose build passes', color: 'var(--good)' },
+    'awaiting-review':   { who: 'reviewer', label: 'Awaiting review',      imp: 'Waiting on reviewers',                       sub: 'the ball is with the reviewers', color: 'var(--run)' },
+    'waiting':           { who: null,       label: 'Waiting',              imp: 'Waiting',                                    sub: '', color: 'var(--none)' },
+    'dnm':               { who: null,       label: 'Do not merge',         imp: 'Parked',                                     sub: '', color: 'var(--none)' },
+    'pending':           { who: null,       label: 'Reading reviews…', imp: 'Reading reviews…',                    sub: '', color: 'var(--none)' },
+  };
+  const REVIEWER_TASKS = {
+    'review-me':    { imp: 'Review it: your review was requested',       sub: 'no review from you on the current head', color: 'var(--accent)' },
+    're-review-me': { imp: 'Re-review: the author moved since your review', sub: 'new commits or an answer after your last review', color: 'var(--accent)' },
+  };
+  const ciOf = pr => st(statusOf(pr.pipe)).bucket;
+  const dormant = pr => !!(pr.rv && pr.rv.lastAuthorActivity && now() - pr.rv.lastAuthorActivity > DORMANT_DAYS * 86400);
+  function classify(pr) {
+    const ci = ciOf(pr), dnm = isDNM(pr.title), rv = pr.rv;
+    if (pr.draft) {
+      if (ci === 'red') return 'draft-red';
+      if (dormant(pr)) return 'dormant';
+      if (ci === 'green' && !dnm) return 'draft-green';
+      if (ci === 'nobuild' || ci === 'other') return 'draft-noci';
+      return dnm ? 'dnm' : 'waiting';   // CI running or queued
+    }
+    if (ci === 'red') return 'ready-red';
+    if (statusOf(pr.pipe) === 'blocked') return 'ci-blocked';
+    if (pr.stale || ci === 'nobuild' || ci === 'other') return 'no-ci';   // skipped / cancelled counts as no verdict
+    if (dormant(pr)) return 'dormant';   // before DNM: parked is parked for DORMANT_DAYS at most
+    if (dnm) return 'dnm';
+    if (!rv || pr.mergeable === undefined) return 'pending';
+    if (pr.baseGone) return 'retarget';
+    if (pr.mergeable === false) return 'conflicts';
+    const requested = pr.requested || [];
+    if (rv.approved) {
+      if (pr.mergeState === 'behind') return 'approved-behind';
+      if (rv.openThreads) return 'awaiting-author';   // approved, but threads still wait for an answer
+      if (ci !== 'green' || pr.mergeable === null) return 'waiting';   // CI running / queued, or GitHub still computing mergeability
+      // GitHub blocks the merge although everything here is green: branch
+      // protection wants more (a second approval, a CODEOWNER, a check). A
+      // requested reviewer who hasn't approved owes that; otherwise the author
+      // has to go and get it.
+      if (pr.mergeState === 'blocked') return requested.some(l => rv.reviews[l]?.state !== 'approved') ? 'awaiting-review' : 'approved-blocked';
+      return 'approved-merge';
+    }
+    // Changes requested holds the author only until they answer it: once every
+    // thread is answered and the author has pushed or replied after the verdict,
+    // the move is the reviewer's re-review, not the author's.
+    const unanswered = rv.changesRequested && rv.lastAuthorActivity <= (rv.changesRequestedAt || 0);
+    if (unanswered || rv.openThreads || rv.lastFeedback > rv.lastAuthorActivity) return 'awaiting-author';
+    const reviewed = Object.keys(rv.reviews);
+    if (!requested.length && !reviewed.length) return 'no-reviewer';
+    const since = Math.max(rv.lastPush, rv.lastAuthorActivity);
+    if (requested.length && !reviewed.length) {
+      const askedAt = Math.min(...requested.map(l => rv.requestedAt[l] || rv.readySince || since || pr.updated));
+      return now() - askedAt > SILENT_DAYS * 86400 ? 'reviewers-silent' : 'awaiting-review';
+    }
+    return 'awaiting-review';   // someone reviewed without a verdict, or a re-request is out: the reviewers' move
+  }
+  // What `viewer` owes this PR as a reviewer, independent of the author-side bucket.
+  function reviewerTask(pr, viewer) {
+    if (!viewer || pr.draft || pr.author === viewer || !pr.rv) return null;
+    // "Do not merge" parks the merge, not the review: an outstanding request is
+    // still the reviewer's move. Judge such a PR by what it would be without
+    // the tag, so red CI / conflicts / open threads still hand it to the author.
+    let k = classify(pr);
+    if (k === 'dnm') k = classify({ ...pr, title: '' });
+    if (['ready-red', 'no-ci', 'ci-blocked', 'dormant', 'retarget', 'conflicts', 'approved-blocked', 'awaiting-author', 'approved-behind'].includes(k)) return null; // the author has to move first
+    const requested = pr.requested || [], mine = pr.rv.reviews[viewer], since = Math.max(pr.rv.lastPush, pr.rv.lastAuthorActivity);
+    if (requested.includes(viewer) && !mine) return 'review-me';
+    if (mine && mine.state !== 'approved' && (mine.at < since || k === 'awaiting-review')) return 're-review-me';   // stale review, or a verdict is still owed
+    if (mine && mine.state === 'approved' && pr.rv.lastPush > mine.at && requested.includes(viewer)) return 're-review-me';
+    return null;
+  }
+  // The invariant the matrix is built to keep — the "theorem" of the board:
+  // every open PR is either owned (an author-side bucket, the admin bucket,
+  // or a reviewer task for at least one named reviewer), or transient (CI in
+  // flight, review data loading, GitHub computing mergeability), or parked as
+  // DNM for at most DORMANT_DAYS. tests/matrix_test.js proves it over the
+  // whole state space; the board reports any live exception as "unowned".
+  function orphan(pr) {
+    const k = classify(pr), b = BUCKETS[k];
+    if (b.who === 'author' || b.who === 'admin') return null;
+    if (b.who === 'reviewer') {
+      const people = [...new Set([...(pr.requested || []), ...Object.keys(pr.rv?.reviews || {})])];
+      return people.some(l => reviewerTask(pr, l)) ? null : 'awaiting review, but no reviewer owes it';
+    }
+    if (k === 'pending') return null;   // review data / mergeability still loading
+    if (k === 'dnm') return dormant(pr) ? `parked as "do not merge" for more than ${DORMANT_DAYS} days` : null;
+    if (k === 'waiting') return (LIVE.includes(statusOf(pr.pipe)) || pr.mergeable === null) ? null : 'waiting, but nothing is in flight';
+    return `unowned bucket ${k}`;
+  }
+  // @matrix-end
+  // When did the PR enter the state it is stuck in? Drives the "waiting Nd" label and the oldest-first order.
+  function stuckSince(pr, bucket, viewer = '') {
+    const rv = pr.rv || {}, p = pr.pipe, fin = p ? (p.finished || p.started || p.created || 0) : 0;
+    const asked = l => rv.requestedAt?.[l] || rv.readySince || rv.lastPush || 0;
+    switch (bucket) {
+      case 'draft-red': case 'ready-red': case 'draft-green': case 'draft-noci': case 'no-ci': case 'ci-blocked': return fin || pr.updated;
+      case 'dormant': return rv.lastAuthorActivity || pr.updated;
+      case 'retarget': case 'conflicts': case 'approved-behind': return Math.max(rv.lastPush || 0, pr.updated || 0) || pr.updated;
+      case 'approved-merge': case 'approved-blocked': return Math.max(0, ...Object.values(rv.reviews || {}).filter(r => r.state === 'approved').map(r => r.at)) || pr.updated;
+      case 'awaiting-author': return rv.openList?.[0]?.at || rv.lastFeedback || pr.updated;
+      case 'no-reviewer': return rv.readySince || rv.lastPush || pr.updated;
+      case 'reviewers-silent': return Math.min(...(pr.requested || []).map(asked)) || pr.updated;
+      case 'awaiting-review': return Math.max(rv.lastPush || 0, rv.lastAuthorActivity || 0) || pr.updated;
+      case 'review-me': return asked(viewer) || pr.updated;
+      case 're-review-me': return Math.max(rv.lastPush || 0, rv.lastAuthorActivity || 0) || pr.updated;
+      default: return pr.updated;
+    }
+  }
+  const days = ts => ts ? (now() - ts) / 86400 : 0;
+  function ageTag(ts) {
+    const d = days(ts);
+    if (d < 1) return '';
+    const cls = d >= 7 ? 'hot' : d >= 3 ? 'warm' : '';
+    return `<span class="age ${cls}" title="in this state since ${new Date(ts * 1000).toLocaleString()}">waiting ${Math.floor(d)}d</span>`;
+  }
+  // Secondary blockers the primary bucket hides: what else the author will hit right after.
+  function alsoTags(pr, primary) {
+    const rv = pr.rv, out = [];
+    // conflicts already carry their own tag in the row
+    if (rv?.openThreads && primary !== 'awaiting-author') out.push(['warn', `${rv.openThreads} open thread${rv.openThreads > 1 ? 's' : ''}`]);
+    if (pr.mergeState === 'behind' && primary !== 'approved-behind') out.push(['warn', 'behind main']);
+    if (pr.stale && primary !== 'no-ci') out.push(['warn', 'outdated build']);
+    if (rv && !pr.draft && !(pr.requested || []).length && !Object.keys(rv.reviews).length && primary !== 'no-reviewer' && !isDNM(pr.title)) out.push(['warn', 'no reviewer']);
+    if (pr.baseGone && primary !== 'retarget') out.push(['warn', 'base gone']);
+    if (dormant(pr) && primary !== 'dormant') out.push(['none', 'dormant']);
+    return out;
+  }
+  const detailCache = new Map();
+  async function pipelineDetail(repoId, number) {
+    const k = `${repoId}/${number}`;
+    if (!detailCache.has(k)) detailCache.set(k, wp(`/repos/${repoId}/pipelines/${number}`).catch(() => null));
+    const d = await detailCache.get(k);
+    if (d && LIVE.includes(d.status)) detailCache.delete(k); // don't cache live ones
+    return d;
+  }
+  async function stepLogText(repoId, number, stepId) {
+    const lines = await wp(`/repos/${repoId}/logs/${number}/${stepId}`);
+    return (lines || []).map(l => l.data ? b64utf8(l.data) : '').join('\n');
+  }
+
+  // ---------------------------------------------------------------- reports host
+  // Embedded: a same-origin proxy at REPORTS.proxyPath forwards to the reports
+  // host (credentials added there, access gated on the Woodpecker session).
+  // Standalone on the reports host: same origin, the browser reuses its
+  // Basic-Auth session. Anywhere else: the base URL from settings, if any — a
+  // host without CORS headers can't be read cross-origin.
+  function pgBase() {
+    if (!REPORTS_HOST) return null;
+    if (EMBEDDED) return REPORTS.proxyPath ? RP + REPORTS.proxyPath.replace(/\/+$/, '') : null;
+    if (location.hostname === REPORTS_HOST) return '';
+    const b = (state.cfg.reportsBase || '').trim().replace(/\/+$/, '');
+    return b || null;
+  }
+  async function pg(path, as = 'json') {
+    const r = await fetch(pgBase() + path, { credentials: 'same-origin', cache: 'no-store' });
+    if (!r.ok) throw new ApiError(`${REPORTS_HOST} ${r.status} on ${path}`, r.status, 'reports');
+    return as === 'json' ? r.json() : r.text();
+  }
+  function parseLcov(text) {
+    const t = { LF: 0, LH: 0, FNF: 0, FNH: 0, BRF: 0, BRH: 0 };
+    for (const m of text.matchAll(/^(LF|LH|FNF|FNH|BRF|BRH):(\d+)/gm)) t[m[1]] += +m[2];
+    const pct = (h, f) => f ? (h / f * 100) : null;
+    return {
+      lines: { pct: pct(t.LH, t.LF), hit: t.LH, total: t.LF },
+      functions: { pct: pct(t.FNH, t.FNF), hit: t.FNH, total: t.FNF },
+      branches: { pct: pct(t.BRH, t.BRF), hit: t.BRH, total: t.BRF },
+    };
+  }
+  async function loadInsights() {
+    if (pgBase() === null) { state.insights = { unavailable: true }; return; }
+    const out = { bench: null, cov: null, nightly: null, nights: [], errors: [] };
+    const [b, c, n, dir] = await Promise.allSettled([
+      pg(PG.bench), pg(PG.covInfo, 'text'), pg(PG.nightlyLatest), pg(PG.nightlyDir, 'text'),
+    ]);
+    if (b.status === 'fulfilled') out.bench = b.value; else out.errors.push(b.reason.message);
+    if (c.status === 'fulfilled') out.cov = parseLcov(c.value); else out.errors.push(c.reason.message);
+    if (n.status === 'fulfilled') out.nightly = n.value; else out.errors.push(n.reason.message);
+    if (dir.status === 'fulfilled') {
+      const dates = [...new Set([...dir.value.matchAll(/href="(nightly-\d{4}-\d{2}-\d{2})\.json"/g)].map(m => m[1]))].sort().slice(-NIGHTS);
+      const files = await Promise.allSettled(dates.map(d => pg(`${PG.nightlyDir}${d}.json`)));
+      out.nights = files.filter(f => f.status === 'fulfilled').map(f => f.value).filter(x => x && x.date).sort((a, b) => a.date.localeCompare(b.date));
+    }
+    state.insights = out;
+  }
+
+  // ---------------------------------------------------------------- PR CI reports
+  // The tables the CI posts on every PR (recognised by MARKERS). With a GitHub token they come from
+  // the PR comments; otherwise from the `publish` / `coverage` step logs of the
+  // PR's latest pipeline, which print the exact same markdown before posting.
+  const prReportCache = new Map();
+  async function loadPrReports(repo, pr) {
+    const useGh = ghEnabled();
+    const key = `${repo.id}/${pr.number}/${pr.pipe?.number || 0}/${useGh ? 'gh' : 'log'}`;
+    if (prReportCache.has(key)) return prReportCache.get(key);
+    const p = (async () => {
+      if (useGh) {
+        try {
+          const comments = await ghAll(`/repos/${repo.full_name}/issues/${pr.number}/comments`);
+          const pick = marker => comments.filter(c => c.body && c.body.includes(`<!-- ${marker} -->`)).pop() || null;
+          return { source: 'GitHub comments', bench: parseReport(pick(MARKERS.bench)), cov: parseReport(pick(MARKERS.cov)) };
+        } catch (e) { if (!pr.pipe) throw e; /* fall through to the step logs */ }
+      }
+      if (!pr.pipe) return { source: 'step logs', bench: null, cov: null };
+      const detail = await pipelineDetail(repo.id, pr.pipe.number);
+      const steps = (detail?.workflows || []).flatMap(w => (w.children || []).map(c => ({ ...c, workflow: w.name })));
+      const grab = async (stepName, marker) => {
+        const s = steps.find(c => c.name === stepName && c.state !== 'skipped');
+        if (!s) return null;
+        const text = await stepLogText(repo.id, pr.pipe.number, s.id).catch(() => '');
+        const i = text.indexOf(marker);
+        if (i < 0) return null;
+        const rep = parseReport({ body: text.slice(i + marker.length), created_at: null });
+        if (rep) rep.pipeline = rep.pipeline || pr.pipe.number;
+        return rep;
+      };
+      const [bench, cov] = await Promise.all([grab('publish', 'Comment preview:'), grab('coverage', '--- comment body ---')]);
+      return { source: 'step logs', bench, cov, live: LIVE.includes(detail?.status) };
+    })();
+    prReportCache.set(key, p);
+    p.then(r => { if (r?.live) prReportCache.delete(key); }, () => prReportCache.delete(key));
+    return p;
+  }
+  const REPORTS_LINK = REPORTS_HOST && new RegExp(`\\[([^\\]]+)\\]\\((https://${REPORTS_HOST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[^)\\s]+)\\)`, 'g');
+  // Pull `| a | b | c |` markdown tables + the pipeline link out of a report body.
+  function parseReport(c) {
+    if (!c) return null;
+    const body = c.body;
+    const pm = /Pipeline \[#(\d+)\]\((https?:[^)]+)\)/.exec(body);
+    const tables = [];
+    let cur = null;
+    for (const raw of body.split('\n')) {
+      const line = raw.trim();
+      if (/^\|.*\|$/.test(line)) {
+        const cells = line.slice(1, -1).split('|').map(x => x.trim());
+        if (cells.every(x => /^:?-{2,}:?$/.test(x))) continue; // separator
+        if (!cur) { cur = { header: cells, rows: [] }; tables.push(cur); } else cur.rows.push(cells);
+      } else cur = null;
+    }
+    // Only links to our reports host are surfaced; anything else in a comment/log stays text.
+    const links = REPORTS_LINK ? [...body.matchAll(REPORTS_LINK)].map(m => ({ text: m[1], url: m[2] })) : [];
+    return { pipeline: pm ? +pm[1] : null, url: pm ? pm[2] : null, at: c.updated_at || c.created_at, tables, links };
+  }
+  const mdStrip = s => String(s || '').replace(/\*\*/g, '').replace(/`/g, '').replace(/_\(([^)]*)\)_/g, '($1)').replace(/_([^_]+)_/g, '$1').replace(/\\\//g, '/').trim();
+  function deltaCell(txt) {
+    const t = String(txt || '');
+    const cls = t.includes('🟢') ? 'good' : t.includes('🔴') ? 'bad' : t.includes('⚪') ? 'flat' : 'na';
+    const val = mdStrip(t.replace(/[🟢🔴⚪]/g, '')) || '—';
+    return `<span class="delta ${cls}">${esc(val)}</span>`;
+  }
+  function reportTable(tbl) {
+    if (!tbl) return '';
+    const h = tbl.header.map((x, i) => `<th class="${i ? 'n' : ''}">${esc(mdStrip(x))}</th>`).join('');
+    const rows = tbl.rows.map(r => `<tr>${r.map((x, i) => {
+      if (i === 0) return `<td class="name">${esc(mdStrip(x))}</td>`;
+      if (i === r.length - 1 && /Δ|Diff/i.test(tbl.header[i] || '')) return `<td class="n">${deltaCell(x)}</td>`;
+      const v = mdStrip(x);
+      return `<td class="n">${/\*\*/.test(x) ? `<b>${esc(fmtNum(v))}</b>` : esc(fmtNum(v))}</td>`;
+    }).join('')}</tr>`).join('');
+    return `<table class="cmp"><thead><tr>${h}</tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  const fmtNum = v => /^-?\d+\.\d{3,}$/.test(v) ? String(Math.round(+v * 100) / 100) : v;
+  const nf = (v, d = 1) => v == null || isNaN(v) ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 });
+  const pctDelta = (cur, prev) => (cur == null || prev == null || !prev) ? null : (cur - prev) / prev * 100;
+  function deltaBadge(d, higherIsBetter = true, unit = '%') {
+    if (d == null || isNaN(d)) return `<span class="delta na">—</span>`;
+    const good = higherIsBetter ? d > 0 : d < 0;
+    const cls = Math.abs(d) < 0.05 ? 'flat' : good ? 'good' : 'bad';
+    return `<span class="delta ${cls}">${d > 0 ? '+' : ''}${d.toFixed(unit === '%' ? 1 : 2)}${unit}</span>`;
+  }
+
+  // ---------------------------------------------------------------- loading
+  // Three phases per repo, each one paints as soon as it lands:
+  //   core  — default-branch + cron pipelines (the hero cards)
+  //   prs   — open PRs joined with their latest CI runs
+  //   meta  — per-PR GitHub mergeability + review timeline, hero workflow details
+  const emptyRepoData = () => ({ main: null, mainHist: [], crons: [], prs: [], prMode: 'ci', errors: [], phase: 'none' });
+  async function loadCore(repo) {
+    const id = repo.id;
+    const out = { main: null, mainHist: [], crons: [], errors: [] };
+    const [mainRes, cronDefsRes, cronPipesRes] = await Promise.allSettled([
+      wp(`/repos/${id}/pipelines?event=push&branch=${encodeURIComponent(repo.default_branch)}&per_page=${HISTORY}`),
+      wp(`/repos/${id}/cron`),
+      wp(`/repos/${id}/pipelines?event=cron&per_page=50`),
+    ]);
+    // Only pushes (merges) count as the state of main: the API is asked for
+    // event=push, and the filter is repeated here so a manual run of main —
+    // e.g. an upstream's validation builds, which are allowed to be red — can
+    // never slip in. Woodpecker serves 50 per page regardless of per_page;
+    // superseded runs go, then the strip length is applied.
+    if (mainRes.status === 'fulfilled') { out.mainHist = dropSuperseded((mainRes.value || []).filter(p => p.event === 'push')).slice(0, HISTORY); out.main = out.mainHist[0] || null; }
+    else out.errors.push(mainRes.reason.message);
+
+    const cronDefs = cronDefsRes.status === 'fulfilled' ? (cronDefsRes.value || []) : [];
+    const cronPipes = cronPipesRes.status === 'fulfilled' ? (cronPipesRes.value || []) : [];
+    out.crons = cronDefs.map(c => {
+      const runs = cronPipes.filter(p => p.sender === c.name);
+      return { def: c, latest: runs[0] || null, hist: runs.slice(0, HISTORY) };
+    });
+    return out;
+  }
+
+  async function loadPRs(repo) {
+    const id = repo.id;
+    const out = { prs: [], prMode: 'ci', errors: [] };
+    // Open pull requests: GitHub (rich) when a token is set, otherwise
+    // Woodpecker's forge proxy (number + title), otherwise recent CI runs.
+    let openPRs = null;
+    // Embedded, the /github/ proxy covers every repo of the org; a repo it can't read falls back to Woodpecker's PR list.
+    if (ghEnabled()) {
+      try {
+        openPRs = (await ghAll(`/repos/${repo.full_name}/pulls?state=open&sort=updated&direction=desc`)).map(pr => ({
+          number: pr.number, title: pr.title, url: pr.html_url, draft: !!pr.draft,
+          author: pr.user?.login, avatar: pr.user?.avatar_url ? pr.user.avatar_url + '&s=96' : null,
+          head: pr.head?.ref, base: pr.base?.ref, headSha: pr.head?.sha, updated: Math.floor(new Date(pr.updated_at) / 1000),
+          requested: (pr.requested_reviewers || []).filter(u => u.login && !isBot(u) && u.login !== pr.user?.login).map(u => u.login),   // a bot or the author can't owe a review
+          avatars: Object.fromEntries((pr.requested_reviewers || []).filter(u => u.login && u.avatar_url).map(u => [u.login, u.avatar_url + '&s=64'])),
+        }));
+        out.prMode = 'github';
+      } catch (e) { if (!EMBEDDED) out.errors.push(e.message); /* embedded: the proxy may not read this repo, fall back */ }
+    }
+    if (!openPRs) {
+      try { openPRs = await wpOpenPRs(id); out.prMode = 'woodpecker'; }
+      catch (e) { out.errors.push(e.message); }
+    }
+
+    // Latest CI runs per PR. New runs are on the first pages; a PR whose runs
+    // are older comes from the cache, and only PRs with neither force the deep scan.
+    const byNum = new Map();          // pr number → all pipelines (desc)
+    const want = openPRs ? new Set(openPRs.map(p => p.number)) : null;
+    const pagesToScan = openPRs ? PR_PAGES_MAX : 3;
+    const scan = async (from, to) => {
+      const chunks = await Promise.all(Array.from({ length: to - from + 1 }, (_, i) => wp(`/repos/${id}/pipelines?event=pull_request&per_page=50&page=${from + i}`).catch(() => [])));
+      let empty = true;
+      for (const chunk of chunks) for (const p of chunk) {
+        empty = false;
+        const n = prNumOf(p); if (!n) continue;
+        if (!byNum.has(n)) byNum.set(n, []);
+        byNum.get(n).push(trimPipe(p));
+        if (want) want.delete(n);
+      }
+      return !empty;
+    };
+    let more = await scan(1, 3);
+    if (want) for (const n of [...want]) { const c = pc.pipes[`${id}/${n}`]; if (c?.runs?.length) { byNum.set(n, c.runs.slice()); want.delete(n); } }
+    for (let page = 4; more && want && want.size && page <= pagesToScan; page += 3) more = await scan(page, Math.min(page + 2, pagesToScan));
+    for (const [n, arr] of byNum) { arr.sort((a, b) => b.number - a.number); byNum.set(n, dropSuperseded(arr)); }
+
+    const fromPipe = (n, pipe) => {
+      const [head, base] = (pipe?.refspec || '').split(':');
+      return {
+        number: n, title: pipe?.title || firstLine(pipe?.message), url: pipe?.forge_url || `${repo.forge_url}/pull/${n}`, draft: !!pipe?.pr_draft,
+        author: pipe?.author, avatar: pipe?.author_avatar || null, head, base: base || repo.default_branch, headSha: null, updated: pipe?.created || 0,
+      };
+    };
+    if (openPRs) {
+      out.prs = openPRs.map(pr => {
+        const runs = byNum.get(pr.number) || [];
+        const pipe = runs[0] || null;
+        const base = out.prMode === 'github' ? pr : { ...fromPipe(pr.number, pipe), title: pr.title };
+        return { ...base, pipe, runs, stale: !!(pipe && base.headSha && pipe.commit !== base.headSha) };
+      });
+    } else {
+      out.prs = [...byNum.entries()].map(([n, runs]) => ({ ...fromPipe(n, runs[0]), pipe: runs[0], runs, stale: false }))
+        .sort((a, b) => b.pipe.number - a.pipe.number);
+    }
+    if (openPRs) { pcPrune(id, out.prs.map(p => p.number)); for (const pr of out.prs) if (pr.runs.length) pc.pipes[`${id}/${pr.number}`] = { headSha: pr.headSha, runs: pr.runs.slice(0, HISTORY) }; pcSave(); }
+    // Stacked PRs: a base branch that is not the default and that no open PR carries any more.
+    const heads = new Set(out.prs.map(p => p.head).filter(Boolean));
+    for (const pr of out.prs) pr.baseGone = !!(pr.base && pr.base !== repo.default_branch && !heads.has(pr.base));
+    // Carry the previous pass's per-PR meta over so a refresh doesn't flash
+    // every PR back to "reading reviews…" while the meta phase re-runs.
+    const prev = new Map((state.data[id]?.prs || []).map(p => [p.number, p]));
+    for (const pr of out.prs) {
+      const o = prev.get(pr.number);
+      if (o && o.headSha === pr.headSha && o.updated === pr.updated) { pr.rv = o.rv; pr.mergeable = o.mergeable; pr.mergeState = o.mergeState; }
+    }
+    return out;
+  }
+
+  async function loadMeta(repo, d) {
+    const id = repo.id;
+    const heroes = [d.main, ...d.crons.map(c => c.latest)].filter(Boolean);
+    const gh_ = d.prMode === 'github';
+    await Promise.all([
+      ...heroes.map(async p => { p._detail = await pipelineDetail(id, p.number); scheduleRender(); }),
+      gh_ ? pmap(d.prs, META_PARALLEL, async pr => { await Promise.all([mergeInfo(repo, pr, d.main?.commit || ''), prTimeline(repo, pr)]); scheduleRender(); }) : null,
+    ]);
+  }
+
+  const inflight = new Map();
+  function loadRepo(repo) {
+    if (inflight.has(repo.id)) return inflight.get(repo.id);
+    const p = loadRepoNow(repo).finally(() => inflight.delete(repo.id));
+    inflight.set(repo.id, p);
+    return p;
+  }
+  // The phase only ever advances: a refresh of a repo that is already on
+  // screen keeps showing the previous PR list until the new one has landed,
+  // instead of dropping back to skeletons for a second.
+  const PHASES = ['none', 'core', 'prs', 'meta'];
+  const advance = (d, ph) => { if (PHASES.indexOf(ph) > PHASES.indexOf(d.phase)) d.phase = ph; };
+  async function loadRepoNow(repo) {
+    const d = state.data[repo.id] || (state.data[repo.id] = emptyRepoData());
+    try {
+      const core = await loadCore(repo);
+      // Keep the workflow details already on screen: a pipeline whose status
+      // hasn't moved has the same steps, and without this the expanded hero
+      // cards lose their step row until loadMeta has re-fetched it.
+      const prevDetail = new Map([...d.mainHist, ...d.crons.flatMap(c => c.hist)].filter(p => p._detail).map(p => [p.number, p]));
+      for (const p of [...core.mainHist, ...core.crons.flatMap(c => c.hist)]) { const o = prevDetail.get(p.number); if (o && o.status === p.status && o.finished === p.finished) p._detail = o._detail; }
+      Object.assign(d, core); advance(d, 'core'); scheduleRender();
+      const prs = await loadPRs(repo);
+      Object.assign(d, prs, { errors: [...d.errors, ...prs.errors] }); advance(d, 'prs'); scheduleRender();
+      await loadMeta(repo, d);
+      advance(d, 'meta'); scheduleRender();
+    } catch (e) { d.errors.push(e.message); advance(d, 'core'); scheduleRender(); }
+  }
+
+  // The reports host is only needed by the Main tab: fetched when that tab is open,
+  // otherwise in idle time after the PR queue is on screen.
+  function ensureInsights(force = false) {
+    if (state.insightsP && !force) return state.insightsP;
+    if (state.insights && !force) return Promise.resolve();
+    state.insightsP = loadInsights().catch(e => { state.insights = { errors: [e.message], nights: [] }; })
+      .finally(() => { state.insightsP = null; scheduleRender(); });
+    return state.insightsP;
+  }
+
+  async function loadAll() {
+    if (state.loading) return;
+    if (EMBEDDED && !window.WOODPECKER_USER) { renderNeedsLogin(); return; }
+    if (!EMBEDDED && !state.cfg.wpToken) { renderNeedsConfig(); return; }
+    state.loading = true;
+    el('btnRefresh').classList.add('spin');
+    if (!state.repos.length) renderSkeleton();
+    try {
+      // /user/repos: the caller's active repos. (/repos?all=true is admin-only in
+      // Woodpecker — everyone else got a 403 and a bogus "session expired".)
+      const sortRepos = list => list.sort((a, b) => (a.full_name === PRIMARY_REPO ? -1 : b.full_name === PRIMARY_REPO ? 1 : a.full_name.localeCompare(b.full_name)));
+      const pickTab = () => { if (!state.tab || !state.repos.some(r => String(r.id) === state.tab)) state.tab = String(state.repos[0]?.id || ''); };
+      const reposP = wp('/user/repos').then(list => sortRepos(list.filter(r => r.active)));
+      // Known repos from the last visit start loading before /user/repos answers.
+      let early = null;
+      if (!state.repos.length && pc.repos?.length) {
+        state.repos = pc.repos; pickTab();
+        const cur = state.repos.find(r => String(r.id) === state.tab);
+        if (cur) early = loadRepo(cur);
+      }
+      const repos = await reposP;
+      const known = new Set(state.repos.map(r => r.id));
+      state.repos = repos; pickTab();
+      pc.repos = repos.map(r => ({ id: r.id, full_name: r.full_name, default_branch: r.default_branch, forge_url: r.forge_url, active: true })); pcSave();
+      for (const id of Object.keys(state.data)) if (!repos.some(r => String(r.id) === id)) delete state.data[id];
+      if (!EMBEDDED && !state.viewer && state.cfg.ghToken) gh('/user').then(u => { state.viewer = u.login || ''; scheduleRender(); }).catch(() => {});
+      const insightsP = state.view === 'main' ? ensureInsights(true) : null;
+      const current = repos.find(r => String(r.id) === state.tab);
+      // The visible repo first; the others follow without holding up the paint.
+      await Promise.all([early, ...repos.map(r => (early && known.has(r.id) && r === current) ? null : r === current ? loadRepo(r) : new Promise(res => setTimeout(res, 0)).then(() => loadRepo(r)))]);
+      await insightsP;
+      if (!state.insights) (window.requestIdleCallback || (f => setTimeout(f, 800)))(() => ensureInsights(true));
+      stampUpdated();
+      render();
+      connectStream();
+    } catch (e) {
+      renderError(e);
+    } finally {
+      state.loading = false;
+      el('btnRefresh').classList.remove('spin');
+      state.left = period();
+    }
+  }
+  let lastRenderAt = 0;
+  function scheduleRender() {
+    if (state.renderQueued) return;
+    state.renderQueued = true;
+    const wait = Math.max(0, RENDER_MIN_MS - (Date.now() - lastRenderAt));
+    setTimeout(() => requestAnimationFrame(() => { state.renderQueued = false; lastRenderAt = Date.now(); if (state.repos.length) render(); }), wait);
+  }
+
+  // ---------------------------------------------------------------- DOM patching
+  // Every render still builds the markup as a string, but the live DOM is
+  // patched to match it instead of being replaced: nodes that didn't change
+  // are left alone, so a refresh reloads no avatars, restarts no animations,
+  // moves no scroll position and steals no focus. Children are matched by key
+  // (data-key / id / data-num / …) and otherwise by position and tag, so a
+  // reordered PR list moves rows instead of rebuilding them. Two bits of UI
+  // state live only in the DOM and survive a patch: an expanded PR row
+  // (`.pr.open`) and the detail fillDetail() loaded into it.
+  const nodeKey = n => n.nodeType === 1 ? (n.getAttribute('data-key') || n.id || n.getAttribute('data-num') || n.getAttribute('data-tab') || n.getAttribute('data-view') || n.getAttribute('data-filter') || '') : '';
+  function morph(from, to) {
+    if (from.nodeType !== to.nodeType || from.nodeName !== to.nodeName) { from.replaceWith(to); return; }
+    if (from.nodeType === 3) { if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue; return; }
+    if (from.nodeType !== 1) return;
+    const open = from.classList.contains('pr') && from.classList.contains('open');
+    for (const a of [...from.attributes]) if (!to.hasAttribute(a.name)) from.removeAttribute(a.name);
+    for (const a of to.attributes) if (from.getAttribute(a.name) !== a.value) from.setAttribute(a.name, a.value);
+    if (open) from.classList.add('open');
+    const focused = from === document.activeElement;   // never yank what the user is typing into
+    if (from.nodeName === 'INPUT' && !focused && from.value !== to.value) from.value = to.value;
+    if (from.classList.contains('pr-detail') && from.parentElement?.classList.contains('open')) return; // owned by fillDetail
+    morphChildren(from, to);
+    if (from.nodeName === 'SELECT' && !focused && from.value !== to.value) from.value = to.value;
+  }
+  function morphChildren(from, to) {
+    const keyed = new Map();
+    for (const c of from.childNodes) { const k = nodeKey(c); if (k) keyed.set(c.nodeName + '|' + k, c); }
+    let i = 0;
+    for (const t of [...to.childNodes]) {
+      const cur = from.childNodes[i] || null, k = nodeKey(t);
+      let match = null;
+      if (k) match = keyed.get(t.nodeName + '|' + k) || null;
+      else for (let j = i; j < from.childNodes.length; j++) { const c = from.childNodes[j]; if (c.nodeType === t.nodeType && c.nodeName === t.nodeName && !nodeKey(c)) { match = c; break; } }
+      if (!match) { from.insertBefore(t, cur); i++; continue; }
+      if (match !== cur) from.insertBefore(match, cur);
+      morph(match, t); i++;
+    }
+    while (from.childNodes.length > i) from.removeChild(from.lastChild);
+  }
+  const setHtml = (host, html) => { const t = document.createElement(host.tagName); t.innerHTML = html; morphChildren(host, t); };
+  // Avatar URLs that failed to load: rendered as initials from then on, so a
+  // patch never puts the broken <img> back.
+  const brokenImg = new Set();
+
+  // ---------------------------------------------------------------- rendering: pieces
+  const sc = s => `--sc:${st(s).color}`;
+  function pill(s, extra = '') {
+    const d = st(s);
+    return `<span class="pill ${s}" style="${sc(s)}">${ICONS[d.icon]}${esc(extra || d.label)}</span>`;
+  }
+  function glyph(s) {
+    const d = st(s);
+    return `<div class="glyph ${s}" style="${sc(s)}" role="img" aria-label="${d.label}"><div class="ring"></div><div class="disc"><svg class="icon" viewBox="0 0 24 24">${ICONS[d.icon].replace(/^<svg[^>]*>|<\/svg>$/g, '')}</svg></div></div>`;
+  }
+  function avatar(url, name, s) {
+    const d = st(s);
+    url = safeUrl(url);
+    if (brokenImg.has(url)) url = '';
+    const inner = url ? `<img src="${esc(url)}" alt="" data-initials="${esc(initials(name))}">` : `<div class="initials">${esc(initials(name))}</div>`;
+    return `<div class="avatar ${s}" style="${sc(s)}" title="${esc(name || '')}">${inner}<span class="badge">${ICONS[d.icon]}</span></div>`;
+  }
+  function hist(runs, cur, repoId, small = false) {
+    if (!runs.length) return '';
+    const items = runs.slice().reverse().map(p => {
+      const s = statusOf(p);
+      return `<a href="${pipeUrl(repoId, p)}" target="_blank" rel="noopener" class="${p.number === cur ? 'cur' : ''}" style="--c:${st(s).color}" title="#${p.number} · ${st(s).label} · ${ago(p.created)}"></a>`;
+    }).join('');
+    return `<div class="hist">${items}${small ? `<span class="lbl">last ${runs.length}</span>` : ''}</div>`;
+  }
+  function steps(detail) {
+    if (!detail || !detail.workflows?.length) return '';
+    return `<div class="steps">${detail.workflows.map(w => {
+      const s = STATUS[w.state] ? w.state : 'none';
+      const failed = (w.children || []).find(c => ['failure', 'error', 'killed'].includes(c.state));
+      const tip = failed ? `${w.name}: step "${failed.name}" ${failed.state}` : `${w.name}: ${w.state}`;
+      return `<span class="step ${s}" style="${sc(s)}" title="${esc(tip)}"><i></i>${esc(w.name)}${failed ? ` <span class="faint">› ${esc(failed.name)}</span>` : ''}</span>`;
+    }).join('')}</div>`;
+  }
+  const pipeUrl = (repoId, p) => `${state.cfg.server}/repos/${repoId}/pipeline/${p.number}`;
+  function who(p) {
+    if (!p) return '';
+    const name = p.author || p.sender || '';
+    return `<span class="who">${safeUrl(p.author_avatar) ? `<img src="${esc(safeUrl(p.author_avatar))}" alt="">` : ''}${esc(name)}</span>`;
+  }
+
+  function heroCard(kicker, branch, p, hist_, repoId, extraMeta = '') {
+    const s = statusOf(p);
+    const d = st(s);
+    const errs = (p?.errors || []).length;
+    return `<article class="card ${s}" style="${sc(s)}">
+      <div class="hero">
+        ${glyph(s)}
+        <div style="min-width:0">
+          <div class="kicker">${esc(kicker)} <span class="branch">${esc(branch)}</span></div>
+          <div class="headline">${p ? `<a href="${pipeUrl(repoId, p)}" target="_blank" rel="noopener">${esc(d.label)} <span class="faint mono" style="font-weight:500">#${p.number}</span></a>` : 'No pipelines yet'} ${errs ? `<span class="tag err">${errs} config error${errs > 1 ? 's' : ''}</span>` : ''}</div>
+          ${p ? `<div class="msg" title="${esc(firstLine(p.message))}">${esc(firstLine(p.message) || p.title || '—')}</div>` : `<div class="msg">Nothing has run for this yet.</div>`}
+          <div class="meta">
+            ${who(p)}
+            ${p ? `<span title="${new Date(p.created * 1000).toLocaleString()}">${agoEl(p.finished || p.started || p.created, p.finished ? 'finished ' : 'started ')}</span>` : ''}
+            ${p && p.started ? `<span class="mono">${dur(p)}</span>` : ''}
+            ${p ? `<a class="mono" href="${esc(safeUrl(p.forge_url))}" target="_blank" rel="noopener noreferrer" title="Open on GitHub">${esc((p.commit || '').slice(0, 8))} ${ICONS.ext}</a>` : ''}
+            ${extraMeta}
+          </div>
+        </div>
+      </div>
+      <div class="hero-foot">
+        ${hist(hist_, p?.number, repoId)}
+        ${steps(p?._detail)}
+      </div>
+    </article>`;
+  }
+
+  // ---------------------------------------------------------------- rendering: insights
+  // A sparkline is autoscaled to its own min..max, so without an ordinate
+  // legend a 1% wiggle and a 40% collapse draw the same picture. The axis
+  // column repeats the two numbers the curve is stretched between (top = max
+  // at y=6, bottom = min at y=h-6); `fmt`/`unit` say how to read them.
+  function sparkline(values, { w = 300, h = 56, fmt = v => nf(v, 1), unit = '' } = {}) {
+    const v = values.filter(x => x != null && !isNaN(x));
+    if (v.length < 2) return '';
+    const min = Math.min(...v), max = Math.max(...v), flat = max === min, span = (max - min) || 1;
+    const px = i => 4 + i * (w - 8) / (values.length - 1);
+    const py = x => flat ? h / 2 : 6 + (h - 12) * (1 - (x - min) / span);
+    let d = '', first = true;
+    values.forEach((x, i) => { if (x == null) return; d += `${first ? 'M' : 'L'}${px(i).toFixed(1)},${py(x).toFixed(1)} `; first = false; });
+    const last = values.length - 1;
+    const area = d + `L${px(last).toFixed(1)},${h} L${px(values.findIndex(x => x != null)).toFixed(1)},${h} Z`;
+    const svg = `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line class="g" x1="0" x2="${w}" y1="${py(v[v.length - 1]).toFixed(1)}" y2="${py(v[v.length - 1]).toFixed(1)}"/><path class="area" d="${area}"/><path d="${d}"/><circle cx="${px(last).toFixed(1)}" cy="${py(values[last]).toFixed(1)}" r="3.5"/></svg>`;
+    const tick = x => `<span>${esc(fmt(x))}${unit ? `<i>${esc(unit)}</i>` : ''}</span>`;
+    const axis = flat ? tick(max) : tick(max) + tick(min);
+    const tip = flat ? `flat at ${fmt(max)}${unit}` : `axis ${fmt(min)}${unit} … ${fmt(max)}${unit} · span ${fmt(max - min)}${unit}`;
+    return `<div class="sparkbox" style="--sh:${h}px" title="${esc(tip)}"><div class="sy mono${flat ? ' one' : ''}" aria-hidden="true">${axis}</div>${svg}</div>`;
+  }
+  // `sub` is trusted HTML built by the callers from numbers / deltaBadge(); any upstream text in it must be esc()'d by the caller.
+  function metric(label, value, unit = '', sub = '') {
+    return `<div class="metric"><div class="l">${esc(label)}</div><div class="v">${value == null ? '—' : esc(String(value))}${unit ? `<small>${esc(unit)}</small>` : ''}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+  }
+  // The nightly report compares the subject (this repo's product) with a
+  // baseline system; their names and JSON field prefixes come from
+  // SITE.reports.nightly: `<key>_tpmc`, per_txn[i][key], per_query[i]['<key>_s'].
+  const NB = { subject: { key: 'subject', label: 'Subject' }, baseline: { key: 'baseline', label: 'Baseline' }, ...(REPORTS.nightly || {}) };
+  const S = NB.subject, B = NB.baseline;
+  const sv = (o, f) => o?.[`${S.key}_${f}`], bv = (o, f) => o?.[`${B.key}_${f}`];
+  function barRows(rows, fmt = v => nf(v, 1), lowerIsBetter = false) {
+    const max = Math.max(...rows.flatMap(r => [r.a || 0, r.b || 0])) || 1;
+    return `<div class="bars">${rows.map(r => {
+      const ratio = (r.a && r.b) ? (lowerIsBetter ? r.a / r.b : r.b / r.a) : null;
+      return `<div class="bar-row" title="${esc(r.label)}: ${esc(B.label)} ${fmt(r.a)} · ${esc(S.label)} ${fmt(r.b)}">
+        <span class="lbl truncate">${esc(r.label)}</span>
+        <span class="track"><i class="a" style="width:${(100 * (r.a || 0) / max).toFixed(1)}%"></i><i class="b" style="width:${(100 * (r.b || 0) / max).toFixed(1)}%"></i></span>
+        <span class="val">${ratio ? `${ratio.toFixed(2)}×` : '—'}</span></div>`;
+    }).join('')}</div>`;
+  }
+  const legend = () => `<div class="legend"><span><i style="background:var(--s-a)"></i>${esc(B.legend || B.label)}</span><span><i style="background:var(--s-b)"></i>${esc(S.label)}</span><span class="faint" style="margin-left:auto">× = ${esc(S.label)} vs ${esc(B.label)}</span></div>`;
+
+  function renderInsights(repo, d) {
+    const I = state.insights;
+    const links = { nightlyHtml: `${REPORTS_PUBLIC}${PG.nightlyDir}latest.html`, covFull: n => `${REPORTS_PUBLIC}${PG.covPipelines}${n}/full/index.html` };
+    let html = `<div class="section-title"><h2>Main · performance & coverage</h2><span class="sub">what CI compares every PR against</span></div>`;
+    if (!I || I.unavailable) {
+      html += `<div class="hint"><b>Benchmarks, coverage and the nightly report are only readable from ${esc(REPORTS_NAME)}.</b> Open this board inside Woodpecker (<code>${esc(DEFAULT_SERVER + BOARD_ROUTE)}</code>)${REPORTS.standaloneUrl ? ` or from <code>${esc(REPORTS.standaloneUrl)}</code>` : ''}, or set a reports base URL in settings if you proxy it locally.</div>`;
+      return html;
+    }
+    html += `<div class="insights">`;
+
+    // --- benchmarks baseline (main) ---
+    const b = I.bench;
+    html += `<article class="card" style="--sc:var(--accent)"><div class="ihead"><h3>Benchmark baseline</h3><span class="sub">${b ? `main <span class="mono">${esc((b.commit || '').slice(0, 8))}</span> · pipeline <a class="mono" href="${state.cfg.server}/repos/${repo.id}/pipeline/${esc(b.pipeline)}" target="_blank" rel="noopener">#${esc(b.pipeline)}</a> · ${ago(Math.floor(new Date(b.timestamp) / 1000))}` : 'unavailable'}</span></div>`;
+    if (b) {
+      const tv = b.benchbase_tpch?.validation;
+      html += `<div class="metrics">
+        ${metric('go-tpc tpmC', nf(b.go_tpcc?.tpmc, 1), '', `1 wh · tpmTotal ${nf(b.go_tpcc?.tpm, 0)}`)}
+        ${metric('BenchBase', nf(b.benchbase?.throughput, 1), 'req/s', `goodput ${nf(b.benchbase?.goodput, 1)}`)}
+        ${metric('BenchBase p99', nf(b.benchbase?.p99_latency_us, 0), 'µs', `p50 ${nf(b.benchbase?.p50_latency_us, 0)} · p95 ${nf(b.benchbase?.p95_latency_us, 0)}`)}
+        ${metric('TPC-H geomean', nf(b.benchbase_tpch?.geomean_s, 3), 's', `${esc(b.benchbase_tpch?.queries ?? '—')} queries · total ${nf(b.benchbase_tpch?.total_s, 1)} s`)}
+        ${metric('TPC-H results', tv === 'pass' ? '✓ identical' : tv === 'fail' ? '✗ diverge' : '—', '', `vs ${B.label}, same dataset`)}
+      </div>`;
+      if (d?.main && b.commit && d.main.commit !== b.commit) html += `<div class="hint" style="margin-top:12px">Baseline is from an older main commit than the latest push (<span class="mono">${esc(d.main.commit.slice(0, 8))}</span>). It refreshes when that pipeline's <em>publish</em> step finishes.</div>`;
+    } else html += `<div class="hint">${esc(I.errors.find(e => e.includes('benchmarks')) || 'No baseline.json yet.')}</div>`;
+    html += `</article>`;
+
+    // --- coverage baseline (main) ---
+    const c = I.cov;
+    html += `<article class="card" style="--sc:var(--good)"><div class="ihead"><h3>Coverage baseline</h3><span class="sub">lcov from the Debug pipeline on main</span><span class="links">${d?.main ? `<a href="${links.covFull(d.main.number)}" target="_blank" rel="noopener">full report #${d.main.number} ${ICONS.ext}</a>` : ''}</span></div>`;
+    if (c) {
+      html += `<div class="metrics">${[['Lines', c.lines], ['Functions', c.functions], ['Branches', c.branches]].map(([l, x]) =>
+        `<div class="metric"><div class="l">${l}</div><div class="v">${x.pct == null ? '—' : x.pct.toFixed(2)}<small>%</small></div><div class="s mono">${nf(x.hit, 0)} / ${nf(x.total, 0)}</div><div class="meter"><i style="width:${(x.pct || 0).toFixed(1)}%"></i></div></div>`).join('')}</div>`;
+    } else html += `<div class="hint">${esc(I.errors.find(e => e.includes('coverage')) || 'No baseline.info yet.')}</div>`;
+    html += `</article>`;
+
+    // --- nightly subject vs baseline ---
+    const n = I.nightly;
+    const nights = I.nights || [];
+    const prev = nights.length > 1 ? nights[nights.length - 2] : null;
+    html += `<article class="card wide" style="--sc:var(--s-b)"><div class="ihead"><h3>Nightly · ${esc(S.label)} vs ${esc(B.label)}</h3><span class="sub">${n ? `${esc(n.date)} · ${esc(S.key)} <span class="mono">${esc((n.commit || '').slice(0, 8))}</span>${B.versionKey ? ` · ${esc(B.versionKey)} <span class="mono">${esc(n.versions?.[B.versionKey] || '?')}</span>` : ''} · pipeline <a class="mono" href="${state.cfg.server}/repos/${repo.id}/pipeline/${esc(n.pipeline)}" target="_blank" rel="noopener">#${esc(n.pipeline)}</a>` : 'unavailable'}</span><span class="links"><a href="${links.nightlyHtml}" target="_blank" rel="noopener">full report ${ICONS.ext}</a></span></div>`;
+    if (n) {
+      const t = n.tpcc || {}, q = n.tpch || {};
+      const cfg = t.config ? `${t.config.warehouses} wh / ${t.config.threads} thr / ${t.config.duration_s} s` : '';
+      const ratioSeries = nights.map(x => x.tpcc?.ratio_pct ?? null);
+      const tpmcSeries = nights.map(x => sv(x.tpcc, 'tpmc') ?? null);
+      const geoSeries = nights.map(x => sv(x.tpch, 'geomean_s') ?? null);
+      html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;align-items:start">
+        <div>
+          <div class="l faint" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em">TPC-C throughput, ${esc(S.label)} as % of ${esc(B.label)}</div>
+          <div class="hero-num" style="margin-top:6px">${t.ratio_pct != null ? t.ratio_pct.toFixed(1) : '—'}<small>%</small> ${prev ? deltaBadge(pctDelta(t.ratio_pct, prev.tpcc?.ratio_pct)) : ''}</div>
+          <div class="faint" style="font-size:12px;margin-top:4px">${esc(cfg)}${prev ? ` · vs ${esc(prev.date)}` : ''}</div>
+          ${sparkline(ratioSeries, { fmt: v => v.toFixed(1), unit: '%' })}
+          <div class="metrics" style="margin-top:10px">
+            ${metric(`${S.label} tpmC`, nf(sv(t, 'tpmc'), 0), '', prev ? deltaBadge(pctDelta(sv(t, 'tpmc'), sv(prev.tpcc, 'tpmc'))) : '')}
+            ${metric(`${B.label} tpmC`, nf(bv(t, 'tpmc'), 0), '', prev ? deltaBadge(pctDelta(bv(t, 'tpmc'), bv(prev.tpcc, 'tpmc'))) : '')}
+            ${metric(`${S.label} p99`, nf(sv(t, 'p99_ms'), 1), 'ms', `${esc(B.label)} ${nf(bv(t, 'p99_ms'), 1)} ms`)}
+            ${metric(`${S.label} p50`, nf(sv(t, 'p50_ms'), 1), 'ms', `${esc(B.label)} ${nf(bv(t, 'p50_ms'), 1)} ms`)}
+          </div>
+          ${tpmcSeries.filter(Boolean).length > 1 ? `<div class="faint" style="font-size:11px;margin-top:10px">${esc(S.label)} tpmC, last ${nights.length} nights</div>${sparkline(tpmcSeries, { fmt: v => nf(v, 0) })}` : ''}
+        </div>
+        <div>
+          <div class="l faint" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">TPC-C per transaction · tpm</div>
+          ${legend()}
+          ${barRows((t.per_txn || []).map(r => ({ label: r.txn, a: r[B.key]?.tpm, b: r[S.key]?.tpm })), v => nf(v, 0))}
+          <div class="l faint" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px">TPC-C per transaction · p99 ms (lower is better)</div>
+          ${barRows((t.per_txn || []).map(r => ({ label: r.txn, a: r[B.key]?.p99_ms, b: r[S.key]?.p99_ms })), v => nf(v, 1), true)}
+        </div>
+        <div>
+          <div class="l faint" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em">TPC-H power run${q.scalefactor ? ` · SF ${esc(q.scalefactor)}` : ''}</div>
+          <div class="hero-num" style="margin-top:6px">${q.ratio != null ? q.ratio.toFixed(2) : '—'}<small>× geomean speed vs ${esc(B.label)}</small></div>
+          <div class="metrics" style="margin-top:10px">
+            ${metric(`${S.label} geomean`, nf(sv(q, 'geomean_s'), 3), 's', prev ? deltaBadge(pctDelta(sv(q, 'geomean_s'), sv(prev.tpch, 'geomean_s')), false) : '')}
+            ${metric(`${B.label} geomean`, nf(bv(q, 'geomean_s'), 3), 's', `${esc(q.queries ?? '—')} common queries`)}
+            ${metric('Total', `${nf(sv(q, 'total_s'), 1)}`, 's', `${esc(B.label)} ${nf(bv(q, 'total_s'), 1)} s`)}
+            ${metric('Results', q.validation === 'pass' ? '✓ identical' : q.validation === 'fail' ? '✗ diverge' : '—', '', `${S.label} vs ${B.label}`)}
+          </div>
+          ${geoSeries.filter(Boolean).length > 1 ? `<div class="faint" style="font-size:11px;margin-top:10px">${esc(S.label)} geomean s, last ${nights.length} nights</div>${sparkline(geoSeries, { fmt: v => nf(v, 3), unit: 's' })}` : ''}
+          <div class="l faint" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px">Per query · seconds (lower is better)</div>
+          ${barRows((q.per_query || []).map(r => ({ label: r.q, a: bv(r, 's'), b: sv(r, 's') })), v => nf(v, 3), true)}
+        </div>
+      </div>`;
+    } else html += `<div class="hint">${esc(I.errors.find(e => e.includes('nightly')) || 'No nightly report yet.')}</div>`;
+    html += `</article></div>`;
+    if (I.errors?.length && (b || c || n)) html += `<div class="faint" style="font-size:12px;margin-top:8px">${esc(I.errors.join(' · '))}</div>`;
+    return html;
+  }
+
+  // ---------------------------------------------------------------- rendering: page
+  const PR_MODE_LABEL = { github: 'open on GitHub, latest CI run per PR', woodpecker: 'open PRs via Woodpecker, latest CI run per PR', ci: 'recently built, state unknown' };
+  // What the DOM depends on. Re-rendering only when this changes is what keeps
+  // the page still between refreshes (no replayed animations, no lost state).
+  function signature() {
+    const pipeSig = p => p && [p.number, p.status, p.finished, p.started, (p._detail?.workflows || []).map(w => w.state).join('')].join(':');
+    const viewer = state.viewAs || state.viewer;
+    const I = state.insights;
+    return JSON.stringify([state.tab, state.view, viewer, state.filter, state.search, !!state.insightsP, state.heroOpen, I && !I.unavailable ? [I.bench?.pipeline, I.cov?.lines?.hit, I.nightly?.date, (I.nights || []).length, I.errors] : I ? 'unavailable' : 'none',
+      state.repos.map(r => { const d = state.data[r.id]; return d && [r.id, d.phase, pipeSig(d.main), d.mainHist.map(pipeSig), d.crons.map(c => [c.def.next_exec, pipeSig(c.latest), c.hist.length]), d.prMode, d.errors,
+        d.prs.map(pr => [pr.number, pr.title, pr.draft, pr.mergeable, pr.mergeState, pr.stale, pr.avatar, pr.head, pr.updated, pipeSig(pr.pipe), pr.runs.length, classify(pr), reviewerTask(pr, viewer), (pr.requested || []).join(), pr.rv ? Object.keys(pr.rv.reviews).join() + '/' + pr.rv.openThreads : '', pr.baseGone])]; })]);
+  }
+  function render(force = false) {
+    const sig = signature();
+    if (!force && sig === state.lastSig) { refreshAgo(); return; }
+    state.lastSig = sig;
+    renderRepoTabs();
+    const repo = state.repos.find(r => String(r.id) === state.tab);
+    const d = state.data[repo?.id];
+    const notices = [];
+    if (d && d.errors.length) notices.push(notice(`<b>Some requests failed.</b> ${esc(d.errors.join(' · '))}`, true));
+    if (d && d.phase !== 'none' && d.phase !== 'core' && d.prMode === 'ci') notices.push(notice(`<b>Showing PRs that recently ran in CI</b> — the open-PR list could not be fetched from Woodpecker${EMBEDDED ? '.' : '. Add a GitHub token in <button class="link" data-open-settings>settings</button> to list exactly the open PRs.'}`));
+    setHtml(el('notices'), notices.join(''));
+
+    if (!repo || !d) { el('hero').innerHTML = ''; el('tabs').hidden = true; el('content').innerHTML = `<div class="empty">No active repositories visible.</div>`; return; }
+
+    // Always on top: the default branch and the scheduled runs.
+    setHtml(el('hero'), renderHero(repo, d));
+
+    // View tabs. Actions needs GitHub review data (any repo the proxy can
+    // read); Main is the primary repo's report set from the reports host.
+    const isPrimary = !!REPORTS_HOST && repo.full_name === PRIMARY_REPO;
+    const viewer = state.viewAs || state.viewer;
+    const hasGh = d.prMode === 'github' || d.phase === 'none' || d.phase === 'core';
+    const todo = hasGh ? actionSections(d, viewer).reduce((n, s) => n + s.list.length, 0) : 0;
+    const views = [
+      ...(hasGh ? [['actions', 'Actions', todo || null, 'var(--accent)']] : []),
+      ['prs', 'Pull requests', d.prs.length, null],
+      ...(isPrimary ? [['main', 'Main · perf & coverage', null, null]] : []),
+    ];
+    const view = views.some(v => v[0] === state.view) ? state.view : 'prs';
+    const tabs = el('tabs');
+    tabs.hidden = false; tabs.className = 'tabs views';
+    setHtml(tabs, views.map(([k, l, n, c]) => `<button class="tab ${k === view ? 'active' : ''}" data-view="${k}">${l}${n != null ? `<span class="cnt" ${c ? `style="color:${c};border-color:color-mix(in srgb, ${c} 40%, transparent)"` : ''}>${n}</span>` : ''}</button>`).join(''));
+
+    let html = '';
+    if (view === 'actions') html = renderActions(repo, d, viewer);
+    else if (view === 'prs') html = renderPRs(repo, d, viewer);
+    else html = (!state.insights && state.insightsP ? `<div class="section-title"><h2>Main · performance & coverage</h2><span class="sub">loading from ${esc(REPORTS_NAME)}…</span></div><div class="insights"><div class="sk sk-card"></div><div class="sk sk-card"></div></div>` : renderInsights(repo, d));
+    setHtml(el('content'), html);
+    // Rows that stayed expanded keep their detail; only a changed pipeline / thread count reloads it.
+    el('content').querySelectorAll('.pr.open').forEach(row => { if (row._loadedSig !== row.dataset.sig) fillDetail(row, repo.id); });
+    root.classList.add('settled'); // entry animations only on the first paint
+  }
+
+  function heroStrip(kicker, branch, p, hist_, repoId, extraMeta = '') {
+    const s = statusOf(p), dd = st(s);
+    const failed = (p?._detail?.workflows || []).flatMap(w => (w.children || []).filter(c => ['failure', 'error', 'killed'].includes(c.state)).map(c => `${w.name} › ${c.name}`));
+    return `<div class="strip ${s}" style="${sc(s)}">
+      ${pill(s)}
+      <span class="kicker">${esc(kicker)} <span class="branch">${esc(branch)}</span></span>
+      ${p ? `<a class="mono num" href="${pipeUrl(repoId, p)}" target="_blank" rel="noopener">#${p.number}</a>` : ''}
+      <span class="msg truncate" title="${esc(firstLine(p?.message) || '')}">${p ? esc(firstLine(p.message) || p.title || '—') : 'Nothing has run yet'}</span>
+      ${failed.length ? `<span class="fail truncate" title="${esc(failed.join(', '))}">✗ ${esc(failed.slice(0, 2).join(', '))}${failed.length > 2 ? ` +${failed.length - 2}` : ''}</span>` : ''}
+      <span class="meta">${p ? agoEl(p.finished || p.started || p.created, p.finished ? 'finished ' : 'started ') : ''}${p && p.started ? ` · ${dur(p)}` : ''}${extraMeta ? ` · ${extraMeta}` : ''}</span>
+      ${hist(hist_, p?.number, repoId)}
+    </div>`;
+  }
+  function renderHero(repo, d) {
+    const toggle = `<button class="herotoggle" data-hero-toggle title="${state.heroOpen ? 'Collapse to the status strip' : 'Expand the cards'}">${state.heroOpen ? 'Collapse' : 'Details'} <span class="chev ${state.heroOpen ? 'up' : ''}">${ICONS.chev}</span></button>`;
+    let html = `<div class="section-title" style="margin-top:0"><h2>Latest</h2><span class="sub">merges to the default branch (manual runs don't count) and scheduled runs</span>${toggle}</div>`;
+    if (d.phase === 'none') return html + (state.heroOpen ? `<div class="hero-grid"><div class="sk sk-card"></div><div class="sk sk-card"></div></div>` : `<div class="strips"><div class="sk" style="height:44px"></div><div class="sk" style="height:44px"></div></div>`);
+    if (!state.heroOpen) {
+      html += `<div class="strips">`;
+      html += heroStrip('Merges', repo.default_branch, d.main, d.mainHist, repo.id);
+      for (const c of d.crons) html += heroStrip(`Cron · ${c.def.name}`, c.def.branch, c.latest, c.hist, repo.id, `next ${until(c.def.next_exec)}`);
+      return html + `</div>`;
+    }
+    html += `<div class="hero-grid">`;
+    html += heroCard('Merges', repo.default_branch, d.main, d.mainHist, repo.id);
+    for (const c of d.crons) {
+      const extra = `<span title="${new Date(c.def.next_exec * 1000).toLocaleString()}">${esc(c.def.schedule)} · next ${until(c.def.next_exec)}</span>`;
+      html += heroCard(`Cron · ${c.def.name}`, c.def.branch, c.latest, c.hist, repo.id, extra);
+    }
+    if (!d.crons.length) html += `<article class="card none" style="${sc('none')}"><div class="hero">${glyph('none')}<div><div class="kicker">Cron</div><div class="headline">No cron jobs</div><div class="msg">This repository has no scheduled pipelines configured in Woodpecker.</div></div></div></article>`;
+    return html + `</div>`;
+  }
+
+  // ---------------------------------------------------------------- rendering: Actions
+  // The plan for one login: every author-side bucket of the matrix that holds
+  // one of their PRs, then what they owe others as a reviewer.
+  const byRecent = (a, b) => b.updated - a.updated;
+  function actionSections(d, viewer) {
+    if (!viewer || d.prMode !== 'github') return [];
+    const out = [];
+    const admin = viewer === state.viewer && (!EMBEDDED || !!window.WOODPECKER_USER?.admin);
+    for (const [k, b] of Object.entries(BUCKETS)) {
+      if (b.who !== 'author' && !(b.who === 'admin' && admin)) continue;
+      const list = d.prs.filter(pr => (b.who === 'admin' || pr.author === viewer) && classify(pr) === k).sort((a, b2) => stuckSince(a, k) - stuckSince(b2, k));
+      if (list.length) out.push({ key: k, title: b.imp, sub: b.sub, color: b.color, list });
+    }
+    for (const [k, t] of Object.entries(REVIEWER_TASKS)) {
+      const list = d.prs.filter(pr => reviewerTask(pr, viewer) === k).sort((a, b2) => stuckSince(a, k, viewer) - stuckSince(b2, k, viewer));
+      if (list.length) out.push({ key: k, title: t.imp, sub: t.sub, color: t.color, list });
+    }
+    return out;
+  }
+  function renderActions(repo, d, viewer) {
+    if (d.phase === 'none' || d.phase === 'core') return `<div class="section-title"><h2>What to do</h2><span class="sub">loading the PR queue…</span></div><div class="prlist">${'<div class="sk sk-row"></div>'.repeat(4)}</div>`;
+    if (d.prMode !== 'github') return `<div class="hint" style="margin-top:8px"><b>The action list needs GitHub review data.</b> ${EMBEDDED ? 'The board proxy could not read this repository from GitHub; the open-PR list comes from Woodpecker instead.' : 'Add a GitHub token in <button class="link" data-open-settings>settings</button>.'}</div>`;
+    const people = [...new Set(d.prs.flatMap(pr => [pr.author, ...(pr.requested || []), ...Object.keys(pr.rv?.reviews || {})]))].filter(Boolean).sort((a, b) => a.localeCompare(b));
+    const pendingN = d.prs.filter(pr => classify(pr) === 'pending').length;
+    let html = `<div class="ptabs">
+      <div class="section-title" style="margin:0"><h2>What to do</h2><span class="sub">${viewer ? `plan for <b>${esc(viewer)}</b>` : 'no login known'}${pendingN ? ` · reading reviews for ${pendingN} PR${pendingN > 1 ? 's' : ''}…` : ''}</span></div>
+      <label class="viewas">View as <select id="ob-viewas"><option value="">${esc(state.viewer || '— pick a login —')}</option>${people.filter(p => p !== state.viewer).map(p => `<option value="${esc(p)}" ${p === state.viewAs ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></label>
+    </div>`;
+    if (!viewer) return html + `<div class="hint"><b>Whose plan?</b> ${EMBEDDED ? 'Your Woodpecker login is not known; pick a login above.' : 'Set your GitHub login in <button class="link" data-open-settings>settings</button> or pick one above.'}</div>`;
+    const sections = actionSections(d, viewer);
+    if (!sections.length) {
+      return html + (pendingN
+        ? `<div class="prlist"><div class="empty">Reading reviews…</div></div>`
+        : `<div class="card allclear" style="--sc:var(--good)"><div class="big">Nothing blocks on ${esc(viewer === state.viewer ? 'you' : viewer)}.</div><p class="muted">No PR of theirs needs a move, no review is owed. See the <button class="link" data-view-link="prs">whole queue</button> for what blocks others.</p></div>`);
+    }
+    for (const s of sections) {
+      html += `<section class="action" style="--sc:${s.color}">
+        <div class="ahead"><span class="bar"></span><h3>${esc(s.title)}</h3><span class="cnt">${s.list.length}</span><span class="sub">${esc(s.sub)}</span></div>
+        <div class="prlist">${s.list.map(pr => prRow(pr, repo, viewer, s.key)).join('')}</div>
+      </section>`;
+    }
+    return html;
+  }
+
+  // ---------------------------------------------------------------- rendering: who owes what (lead view)
+  // One row per person: what the queue waits on from them. Clicking a row opens their plan.
+  function renderOwes(d) {
+    const people = new Map();
+    const row = l => { if (!people.has(l)) people.set(l, { login: l, reviews: 0, answer: 0, fix: 0, rebase: 0, ask: 0, merge: 0, dormant: 0, oldest: 0 }); return people.get(l); };
+    const bump = (l, k, ts) => { const r = row(l); r[k]++; if (ts && (!r.oldest || ts < r.oldest)) r.oldest = ts; };
+    for (const pr of d.prs) {
+      const k = classify(pr);
+      if (BUCKETS[k]?.who === 'author' && pr.author) {
+        const col = { 'draft-red': 'fix', 'ready-red': 'fix', 'no-ci': 'fix', conflicts: 'rebase', 'approved-behind': 'rebase', retarget: 'rebase', 'approved-merge': 'merge', 'awaiting-author': 'answer', 'no-reviewer': 'ask', 'reviewers-silent': 'ask', 'draft-green': 'ask', 'draft-noci': 'fix', 'approved-blocked': 'ask', dormant: 'dormant' }[k];
+        if (col) bump(pr.author, col, stuckSince(pr, k));
+      }
+      if (!pr.draft && pr.rv) for (const l of new Set([...(pr.requested || []), ...Object.keys(pr.rv.reviews)])) {
+        const t = reviewerTask(pr, l); if (t) bump(l, 'reviews', stuckSince(pr, t, l));
+      }
+    }
+    const rows = [...people.values()].filter(r => r.reviews + r.answer + r.fix + r.rebase + r.ask + r.merge + r.dormant).sort((a, b) => (a.oldest || 1e12) - (b.oldest || 1e12));
+    const admin = d.prs.filter(pr => classify(pr) === 'ci-blocked').length;
+    const orphans = d.prs.filter(pr => pr.rv && pr.mergeable !== undefined && orphan(pr));
+    const foot = [
+      admin ? `${admin} pipeline${admin > 1 ? 's' : ''} wait${admin > 1 ? '' : 's'} for an admin's approval` : '',
+      orphans.length ? `<span style="color:var(--bad)">unowned: ${orphans.map(pr => `<a href="${esc(safeUrl(pr.url))}" target="_blank" rel="noopener noreferrer" title="${esc(orphan(pr))}">#${pr.number}</a>`).join(', ')} — nobody's move; this is a matrix bug</span>` : '',
+    ].filter(Boolean);
+    if (!rows.length && !foot.length) return '';
+    const cell = (n, cls = '') => `<td class="n ${n ? cls : 'zero'}">${n || '·'}</td>`;
+    return `<article class="card owes" style="--sc:var(--accent)">
+      <div class="ihead"><h3>Who owes what</h3><span class="sub">oldest debt first · click a name for their plan</span></div>
+      <div style="overflow-x:auto"><table class="cmp">
+        <thead><tr><th>Person</th><th class="n" title="reviews requested from them or awaiting their re-review">Reviews owed</th><th class="n" title="review threads or comments waiting for their answer">Answer</th><th class="n" title="red CI / no CI on head">Fix CI</th><th class="n" title="conflicts, behind main, base gone">Rebase</th><th class="n" title="request a reviewer, ping silent reviewers, mark a draft ready">Ask</th><th class="n" title="approved and green">Merge</th><th class="n" title="no activity for ${DORMANT_DAYS}+ days">Dormant</th><th class="n">Oldest</th></tr></thead>
+        <tbody>${rows.map(r => `<tr class="who" data-viewas="${esc(r.login)}" title="Open the plan for ${esc(r.login)}"><td class="name">${esc(shortLogin(r.login))}${r.login === state.viewer ? ' <span class="faint">(you)</span>' : ''}</td>${cell(r.reviews, 'acc')}${cell(r.answer, 'warn')}${cell(r.fix, 'bad')}${cell(r.rebase, 'bad')}${cell(r.ask, 'warn')}${cell(r.merge, 'good')}${cell(r.dormant)}<td class="n">${r.oldest ? `${Math.floor(days(r.oldest))}d` : '·'}</td></tr>`).join('')}</tbody>
+      </table></div>
+      ${foot.length ? `<div class="faint" style="font-size:12px;margin-top:8px">${foot.join(' · ')}</div>` : ''}
+    </article>`;
+  }
+
+  // ---------------------------------------------------------------- rendering: Pull requests
+  const BLOCKER_CHIPS = [['no-reviewer', 'No reviewer'], ['awaiting-author', 'Awaiting author'], ['awaiting-review', 'Awaiting review'], ['reviewers-silent', 'Reviewers silent'], ['approved-merge', 'Approved · merge'], ['needs-rebase', 'Needs rebase'], ['dormant', 'Dormant'], ['retarget', 'Base gone'], ['ci-blocked', 'Pipeline approval']];
+  const bucketMatches = (bucket, want) => want === 'needs-rebase' ? (bucket === 'conflicts' || bucket === 'approved-behind') : bucket === want;
+  function renderPRs(repo, d, viewer) {
+    if (d.phase === 'none' || d.phase === 'core') return `<div class="section-title"><h2>Pull requests</h2><span class="sub">loading…</span></div><div class="prlist">${'<div class="sk sk-row"></div>'.repeat(6)}</div>`;
+    const counts = { all: d.prs.length, green: 0, red: 0, running: 0, waiting: 0, nobuild: 0, conflicts: 0, mergeable: 0 };
+    const bcounts = {};
+    d.prs.forEach(pr => {
+      const k = ciOf(pr); counts[k] = (counts[k] || 0) + 1;
+      if (pr.mergeable === false) counts.conflicts++; if (pr.mergeable === true) counts.mergeable++;
+      const b = classify(pr); for (const [c] of BLOCKER_CHIPS) if (bucketMatches(b, c)) bcounts[c] = (bcounts[c] || 0) + 1;
+    });
+    const hasMerge = d.prs.some(pr => pr.mergeable !== undefined);
+    const hasHead = d.prs.some(pr => pr.headSha);
+    const hasRv = d.prs.some(pr => pr.rv);
+    const tiles = [
+      ['all', 'Open PRs', 'var(--text-3)'], ['red', 'Failing', 'var(--bad)'], ['running', 'Running', 'var(--run)'],
+      ['green', 'Passing', 'var(--good)'], ['waiting', 'Waiting', 'var(--warn)'], ['nobuild', 'No build', 'var(--none)'],
+      ...(hasMerge ? [['conflicts', 'Conflicts', 'var(--bad)']] : []),
+    ];
+    let html = hasRv ? renderOwes(d) : '';
+    html += `<div class="tiles" style="margin-top:0">${tiles.map(([k, l, c]) => `<button class="tile ${state.filter === k ? 'active' : ''}" style="--sc:${c}" data-filter="${k}"><span class="mark"></span><div><div class="num">${counts[k] || 0}</div><div class="lbl">${l}</div></div></button>`).join('')}</div>`;
+
+    html += `<div class="section-title"><h2>Pull requests</h2><span class="sub">${PR_MODE_LABEL[d.prMode]}</span></div>`;
+    const chips = [['all', 'All'], ['red', 'Failing'], ['running', 'Running'], ['green', 'Passing'], ['waiting', 'Waiting'], ['nobuild', 'No build'],
+      ...(hasMerge ? [['mergeable', 'Mergeable'], ['conflicts', 'Conflicts']] : []), ...(hasHead ? [['stale', 'Outdated build']] : []), ['ready', 'Ready for review'], ['draft', 'Drafts']];
+    html += `<div class="filters">
+      ${chips.map(([k, l]) => `<button class="chip ${state.filter === k ? 'active' : ''}" data-filter="${k}">${l}</button>`).join('')}
+      <input class="search" id="ob-search" placeholder="Filter by title, author, branch…" value="${esc(state.search)}">
+    </div>`;
+    if (hasRv) html += `<div class="filters blockers"><span class="faint" style="font-size:12px;margin-right:4px">Blocked on:</span>${BLOCKER_CHIPS.filter(([k]) => bcounts[k]).map(([k, l]) => `<button class="chip ${state.filter === 'b:' + k ? 'active' : ''}" data-filter="b:${k}">${l} <span class="faint">${bcounts[k]}</span></button>`).join('')}</div>`;
+
+    const q = state.search.trim().toLowerCase();
+    const list = d.prs.filter(pr => {
+      const b = ciOf(pr);
+      if (state.filter.startsWith('b:')) { if (!bucketMatches(classify(pr), state.filter.slice(2))) return false; }
+      else if (state.filter === 'stale' && !pr.stale) return false;
+      else if (state.filter === 'draft' && !pr.draft) return false;
+      else if (state.filter === 'ready' && pr.draft) return false;
+      else if (state.filter === 'mergeable' && pr.mergeable !== true) return false;
+      else if (state.filter === 'conflicts' && pr.mergeable !== false) return false;
+      else if (!['all', 'stale', 'draft', 'ready', 'mergeable', 'conflicts'].includes(state.filter) && b !== state.filter) return false;
+      if (q && !`${pr.title} ${pr.author} ${pr.head} #${pr.number} ${(pr.requested || []).join(' ')}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    const order = { running: 0, red: 1, waiting: 2, nobuild: 3, green: 4, other: 5 };
+    list.sort((a, b) => (order[ciOf(a)] - order[ciOf(b)]) || (b.updated - a.updated));
+
+    html += `<div class="prlist">${list.length ? list.map(pr => prRow(pr, repo, viewer)).join('') : `<div class="empty">Nothing matches.</div>`}</div>`;
+    return html;
+  }
+
+  // Only the anomaly is worth a tag; "mergeable" and "CI on head" are the normal state.
+  function mergeTag(pr) {
+    if (pr.mergeable === false) return `<span class="tag conflict" title="Merge conflicts with ${esc(pr.base || 'the base branch')}">Conflicts</span>`;
+    return '';
+  }
+
+  // Blocker tag in the PR row: only the review-side buckets — CI state is the pill already.
+  const BUCKET_TAGGED = ['approved-behind', 'approved-merge', 'approved-blocked', 'awaiting-author', 'no-reviewer', 'reviewers-silent', 'awaiting-review', 'dormant', 'retarget', 'ci-blocked'];
+  // Where the action happens: the first open thread, or the PR page (reviewers panel, merge box).
+  function actionUrl(pr, k) {
+    if (k === 'awaiting-author' && pr.rv?.openList?.[0]?.url) return pr.rv.openList[0].url;
+    return safeUrl(pr.url);
+  }
+  function bucketTag(pr) {
+    const k = classify(pr);
+    if (!BUCKET_TAGGED.includes(k)) return '';
+    const b = BUCKETS[k], n = pr.rv?.openThreads || 0;
+    const extra = k === 'awaiting-author' && n ? ` · ${n} open thread${n > 1 ? 's' : ''}` : '';
+    const url = actionUrl(pr, k);
+    return `<a class="tag bucket" style="--bc:${b.color}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(b.imp)}${url && url !== safeUrl(pr.url) ? ' · opens the first unanswered thread' : ''}">${esc(b.label + extra)} ${ICONS.ext}</a>`;
+  }
+  // Reviewers as avatars: ring color = their latest state, dashed = requested and silent.
+  function reviewerChips(pr) {
+    const rv = pr.rv || {}, names = [...new Set([...(pr.requested || []), ...Object.keys(rv.reviews || {})])];
+    if (!names.length) return '';
+    const avatars = { ...(rv.avatars || {}), ...(pr.avatars || {}) };
+    return `<span class="rvs" title="reviewers">${names.map(l => {
+      const r = rv.reviews?.[l];
+      const cls = !r ? 'asked' : r.state === 'approved' ? 'ok' : r.state === 'changes_requested' ? 'cr' : 'cm';
+      const stateTxt = !r ? `requested${rv.requestedAt?.[l] ? ' ' + ago(rv.requestedAt[l]) : ''}, no review yet` : `${r.state.replace('_', ' ')} ${ago(r.at)}${(pr.requested || []).includes(l) ? ' · re-requested' : ''}`;
+      const url = brokenImg.has(safeUrl(avatars[l])) ? '' : safeUrl(avatars[l]);
+      return `<span class="rv ${cls}" title="${esc(l)}: ${esc(stateTxt)}">${url ? `<img src="${esc(url)}" alt="" data-initials="${esc(initials(l))}">` : `<i>${esc(initials(l))}</i>`}</span>`;
+    }).join('')}</span>`;
+  }
+  function prRow(pr, repo, viewer = '', section = '') {
+    const s = statusOf(pr.pipe);
+    const p = pr.pipe;
+    const task = reviewerTask(pr, viewer);
+    const primary = classify(pr);
+    const stuck = section ? stuckSince(pr, section, viewer) : stuckSince(pr, primary, viewer);
+    const also = alsoTags(pr, section && BUCKETS[section] ? section : primary);
+    return `<div class="pr ${s}" style="${sc(s)}" data-key="${repo.id}/${pr.number}" data-num="${pr.number}" data-pipe="${p ? p.number : ''}" data-sig="${p ? `${p.number}:${p.status}` : ''}:${pr.rv?.openThreads || 0}">
+      ${avatar(pr.avatar, pr.author, s)}
+      <div style="min-width:0">
+        <div class="title">
+          <a class="truncate" href="${esc(safeUrl(pr.url))}" target="_blank" rel="noopener noreferrer" title="${esc(pr.title)}">${esc(pr.title)}</a>
+          ${pr.draft ? `<span class="tag draft">Draft</span>` : ''}
+          ${isDNM(pr.title) ? `<span class="tag dnm">Do not merge</span>` : ''}
+          ${mergeTag(pr)}
+          ${pr.stale ? `<span class="tag stale" title="Latest CI run is for an older commit than the PR head">Outdated build</span>` : ''}
+          ${(p?.errors || []).length ? `<span class="tag err">Config error</span>` : ''}
+          ${bucketTag(pr)}
+          ${task ? `<span class="tag task" title="${esc(REVIEWER_TASKS[task].imp)}">${task === 'review-me' ? 'Your review' : 'Re-review'}</span>` : ''}
+          ${also.length ? `<span class="also">also: ${also.map(([c, t]) => `<span class="${c}">${esc(t)}</span>`).join(', ')}</span>` : ''}
+        </div>
+        <div class="sub">
+          <span class="num">#${pr.number}</span>
+          ${tickets(pr).map(([k, u]) => `<a class="ticket" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="Open ${esc(k)} in the tracker">${esc(k)} ${ICONS.ext}</a>`).join('')}
+          <span>${esc(pr.author || '')}</span>
+          <span class="br truncate" title="${esc(pr.head || '')} → ${esc(pr.base || '')}">${esc(pr.head || '')} <span class="faint">→ ${esc(pr.base || '')}</span></span>
+          ${pr.updated ? agoEl(pr.updated, 'updated ') : ''}
+          ${ageTag(stuck)}
+          ${reviewerChips(pr)}
+        </div>
+      </div>
+      <div class="right">
+        ${p ? `<div class="stat"><b>${dur(p) || '—'}</b>${agoEl(p.finished || p.started || p.created, p.finished ? 'finished ' : 'started ')}</div>` : ''}
+        ${pill(s)}
+        ${p ? `<a class="plink" href="${pipeUrl(repo.id, p)}" target="_blank" rel="noopener" title="Open pipeline">#${p.number}</a>` : ''}
+        <span class="chev">${ICONS.chev}</span>
+      </div>
+      <div class="pr-detail"><div class="faint" style="font-size:12px">Loading workflows…</div></div>
+    </div>`;
+  }
+
+  async function fillDetail(row, repoId) {
+    row._loadedSig = row.dataset.sig;   // a later patch refills only when this changes
+    const box = $('.pr-detail', row);
+    const num = +row.dataset.num, pnum = +row.dataset.pipe;
+    const repo = state.repos.find(r => r.id === repoId);
+    const pr = state.data[repoId].prs.find(x => x.number === num);
+    const parts = [];
+    if (!pnum) parts.push(`<div class="faint" style="font-size:12px">No pipeline has run for this PR yet.</div>`);
+    else {
+      const detail = await pipelineDetail(repoId, pnum);
+      parts.push(steps(detail) || `<div class="faint" style="font-size:12px">No workflow details.</div>`);
+      parts.push(hist(pr.runs.slice(0, HISTORY), pnum, repoId, true));
+    }
+    const open = pr.rv?.openList || [];
+    if (open.length) parts.push(`<div class="threads"><div class="th">Unanswered review threads <span class="faint">${open.length}${pr.rv.openThreads > open.length ? ` of ${pr.rv.openThreads}` : ''}</span></div>${open.map(t =>
+      `<a href="${esc(t.url)}" target="_blank" rel="noopener noreferrer"><span class="mono truncate">${esc(t.path || 'conversation')}${t.line ? `:${t.line}` : ''}</span><span class="faint">${esc(shortLogin(t.who))} · ${ago(t.at)}${t.n > 1 ? ` · ${t.n} msgs` : ''}</span></a>`).join('')}</div>`);
+    box.innerHTML = parts.join('');
+    if (!pnum) return;
+    const slot = document.createElement('div');
+    slot.className = 'reports';
+    slot.innerHTML = `<div class="faint" style="font-size:12px">Loading CI reports…</div>`;
+    box.appendChild(slot);
+    try {
+      const { bench, cov, source } = await loadPrReports(repo, pr);
+      const card = (title, rep, wantHeader) => {
+        if (!rep) return `<div class="rep"><div class="rh">${title}<span class="faint">not available yet</span></div></div>`;
+        const tbl = rep.tables.find(t => t.header.some(h => new RegExp(wantHeader, 'i').test(h))) || rep.tables[0];
+        const stale = pnum && rep.pipeline && rep.pipeline !== pnum;
+        return `<div class="rep"><div class="rh">${title}<span class="faint">pipeline <a class="mono" href="${esc(rep.url && rep.url.startsWith(state.cfg.server + '/') ? rep.url : pipeUrl(repoId, { number: rep.pipeline }))}" target="_blank" rel="noopener">#${rep.pipeline ?? '?'}</a>${stale ? ` · <span class="tag stale" style="font-size:10px">older than latest run</span>` : ''}</span>${rep.links.length ? `<a href="${esc(safeUrl(rep.links[0].url))}" target="_blank" rel="noopener noreferrer">${esc(rep.links[0].text)} ${ICONS.ext}</a>` : ''}</div>${reportTable(tbl)}</div>`;
+      };
+      if (!bench && !cov) { slot.remove(); return; }   // this repo's CI posts no report tables
+      slot.innerHTML = card('Benchmarks vs main', bench, '^Master$') + card('Coverage vs main', cov, '^Coverage$') + `<div class="faint" style="flex-basis:100%;font-size:11px">from ${esc(source)}</div>`;
+    } catch (e) {
+      slot.innerHTML = `<div class="faint" style="font-size:12px">Could not load CI reports: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // "owner/name" with the owner in its own span so phones can drop it.
+  const repoLabel = full => { const i = full.indexOf('/'); return `<span class="name">${i < 0 ? esc(full) : `<span class="org">${esc(full.slice(0, i + 1))}</span>${esc(full.slice(i + 1))}`}</span>`; };
+  function renderRepoTabs() {
+    const tabs = el('repos');
+    tabs.hidden = state.repos.length < 2;
+    setHtml(tabs, state.repos.map(r => {
+      const d = state.data[r.id];
+      const s = statusOf(d?.main);
+      const red = d ? d.prs.filter(p => ciOf(p) === 'red').length : 0;
+      return `<button class="tab ${String(r.id) === state.tab ? 'active' : ''}" data-tab="${r.id}"><span class="dot" style="background:${st(s).color}" title="${esc(r.default_branch)}: ${st(s).label}"></span>${repoLabel(r.full_name)}<span class="cnt" title="open PRs · failing">${d && d.phase !== 'none' && d.phase !== 'core' ? d.prs.length : '…'}${red ? ` · <span style="color:var(--bad)">${red}✗</span>` : ''}</span></button>`;
+    }).join(''));
+  }
+
+  const notice = (html, err = false) => `<div class="notice ${err ? 'err' : ''}">${ICONS.warn}<div>${html}</div></div>`;
+  function renderSkeleton() {
+    el('hero').innerHTML = `<div class="section-title" style="margin-top:0"><h2>Latest</h2></div><div class="hero-grid"><div class="sk sk-card"></div><div class="sk sk-card"></div></div>`;
+    el('content').innerHTML = `<div class="section-title"><h2>What to do</h2></div><div class="prlist">${'<div class="sk sk-row"></div>'.repeat(6)}</div>`;
+  }
+  function renderNeedsConfig() {
+    el('tabs').hidden = true; el('hero').innerHTML = '';
+    el('notices').innerHTML = '';
+    el('content').innerHTML = `<div class="card" style="padding:40px;text-align:center;--sc:var(--accent)">
+      <div style="font-size:20px;font-weight:700;margin-bottom:6px">Connect to Woodpecker</div>
+      <p class="muted" style="max-width:460px;margin:0 auto 18px">Add a Woodpecker API token to see the latest build of the default branch, the nightly cron, and every open pull request. A GitHub token is optional.</p>
+      <button class="btn primary" data-open-settings>Open settings</button></div>`;
+  }
+  function renderNeedsLogin() {
+    el('tabs').hidden = true; el('hero').innerHTML = '';
+    el('notices').innerHTML = '';
+    el('content').innerHTML = `<div class="card" style="padding:40px;text-align:center;--sc:var(--accent)">
+      <div style="font-size:20px;font-weight:700;margin-bottom:6px">Log in to Woodpecker</div>
+      <p class="muted" style="max-width:460px;margin:0 auto 18px">The board uses your Woodpecker session to read builds, pull requests and the CI reports. Nothing else to configure.</p>
+      <a class="btn primary" href="${RP}/login?url=${encodeURIComponent(BOARD_PATH)}">Log in</a></div>`;
+  }
+  function renderError(e) {
+    const auth = e.status === 401, denied = e.status === 403;
+    const title = auth ? (EMBEDDED ? 'Woodpecker session expired.' : 'Woodpecker rejected the token.')
+      : denied ? 'Woodpecker denied access.' : 'Could not load data.';
+    const fix = auth ? (EMBEDDED ? ` — <a href="${RP}/login?url=${encodeURIComponent(BOARD_PATH)}">log in again</a>` : ' — <button class="link" data-open-settings>fix in settings</button>')
+      : denied ? (EMBEDDED ? ' — your Woodpecker user lacks permission for this request.' : ' — the token lacks permission for this request.') : '';
+    el('notices').innerHTML = notice(`<b>${title}</b> ${esc(e.message)}${fix}`, true);
+    if (!state.repos.length) el('content').innerHTML = '';
+  }
+
+  // ---------------------------------------------------------------- settings
+  const dlg = el('settings');
+  function openSettings() {
+    el('fServer').value = state.cfg.server; el('fWp').value = state.cfg.wpToken; el('fGh').value = state.cfg.ghToken; el('fPg').value = state.cfg.reportsBase || ''; el('fViewer').value = state.cfg.viewer || '';
+    el('fPg').disabled = !REPORTS_HOST || location.hostname === REPORTS_HOST;
+    dlg.showModal();
+  }
+  el('btnSettings').onclick = openSettings;
+  el('btnCancel').onclick = () => dlg.close();
+  el('settingsForm').onsubmit = () => {
+    if (!EMBEDDED) {
+      state.cfg.server = (el('fServer').value.trim() || DEFAULT_SERVER).replace(/\/+$/, '');
+      state.cfg.wpToken = el('fWp').value.trim();
+      state.cfg.reportsBase = el('fPg').value.trim();
+      state.cfg.viewer = el('fViewer').value.trim();
+      state.viewer = state.cfg.viewer;
+    }
+    state.cfg.ghToken = el('fGh').value.trim();
+    saveCfg(); state.repos = []; state.data = {}; state.insights = null; state.insightsP = null; state.lastSig = ''; detailCache.clear(); prReportCache.clear(); pc.pipes = {}; pc.merge = {}; pc.meta = {}; pc.repos = null; pcSave();
+    if (state.stream) { state.stream.close(); state.stream = null; state.live = false; }
+    loadAll();
+  };
+  el('btnRefresh').onclick = () => loadAll();
+  el('btnTheme').onclick = toggleTheme;
+  // Everything inside the patched regions is handled by delegation, wired once:
+  // the DOM is patched in place, so per-render handler assignment would either
+  // stack up or miss nodes that were kept.
+  function wire() {
+    const on = (host, type, fn, capture = false) => host.addEventListener(type, fn, capture);
+    on(el('repos'), 'click', e => { const b = e.target.closest('[data-tab]'); if (!b) return; state.tab = b.dataset.tab; try { localStorage.setItem(LS + ':tab', state.tab); } catch {} render(true); });
+    on(el('tabs'), 'click', e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); });
+    on(el('hero'), 'click', e => { if (!e.target.closest('[data-hero-toggle]')) return; state.heroOpen = !state.heroOpen; try { localStorage.setItem(LS + ':hero', state.heroOpen ? 'open' : 'strip'); } catch {} render(true); });
+    on(el('notices'), 'click', e => { if (e.target.closest('[data-open-settings]')) openSettings(); });
+    const content = el('content');
+    on(content, 'click', e => {
+      const t = e.target;
+      let b;
+      if ((b = t.closest('[data-filter]'))) { state.filter = b.dataset.filter; render(true); return; }
+      if ((b = t.closest('[data-view-link]'))) { setView(b.dataset.viewLink); return; }
+      if ((b = t.closest('[data-viewas]'))) { state.viewAs = b.dataset.viewas === state.viewer ? '' : b.dataset.viewas; setView('actions'); return; }
+      if (t.closest('[data-open-settings]')) { openSettings(); return; }
+      const row = t.closest('.pr');
+      if (!row || t.closest('a, select')) return;
+      row.classList.toggle('open');
+      if (row.classList.contains('open')) fillDetail(row, +state.tab);
+    });
+    on(content, 'input', e => { if (e.target.id === 'ob-search') { state.search = e.target.value; render(true); } });
+    on(content, 'change', e => { if (e.target.id === 'ob-viewas') { state.viewAs = e.target.value; render(true); } });
+    // A broken avatar becomes initials (and stays initials, see brokenImg); any other broken image just disappears.
+    on(root, 'error', e => {
+      const img = e.target;
+      if (!(img instanceof HTMLImageElement)) return;
+      brokenImg.add(img.getAttribute('src') || '');
+      if (!img.dataset.initials) { img.hidden = true; return; }
+      const inAvatar = !!img.closest('.avatar');
+      const fb = document.createElement(inAvatar ? 'div' : 'i');
+      if (inAvatar) fb.className = 'initials';
+      fb.textContent = img.dataset.initials || '?';
+      img.replaceWith(fb);
+    }, true);
+  }
+  document.addEventListener('keydown', e => {
+    if (dlg.open || e.target.matches('input, textarea')) return;
+    if (e.key === 'r') loadAll();
+    if (e.key === 't') toggleTheme();
+    if (e.key === ',' && !EMBEDDED) openSettings();
+  });
+
+  // ---------------------------------------------------------------- live events
+  // Woodpecker pushes every pipeline change over SSE (/api/stream/events); a
+  // change to a repo just reloads that repo's data and re-renders if anything
+  // visible moved. The poll below stays as a safety net, stretched while live.
+  const period = () => state.live ? REFRESH_LIVE_SEC : REFRESH_SEC;
+  function connectStream() {
+    if (state.stream || typeof EventSource === 'undefined') return;
+    const url = EMBEDDED ? `${RP}/api/stream/events` : `${state.cfg.server}/api/stream/events?access_token=${encodeURIComponent(state.cfg.wpToken)}`;
+    const es = new EventSource(url, { withCredentials: EMBEDDED });
+    state.stream = es;
+    es.onopen = () => { state.live = true; state.left = Math.max(state.left, period()); stampUpdated(); };   // live: the poll is only a safety net
+    es.onerror = () => { state.live = false; stampUpdated(); };   // EventSource reconnects on its own
+    es.onmessage = ev => {
+      let d; try { d = JSON.parse(ev.data); } catch { return; }
+      const repoId = d?.repo?.id ?? d?.pipeline?.repo_id;
+      if (repoId == null) return;
+      if (applyEvent(repoId, d.pipeline)) return;          // patched in place
+      state.pending.add(repoId);
+      clearTimeout(state.pendingTimer);
+      state.pendingTimer = setTimeout(flushPending, 1500);   // coalesce bursts (one pipeline = many events)
+    };
+  }
+  // Patch one pipeline into the state instead of reloading the repo. Returns
+  // false only when the event needs the full reload (unknown PR, new cron, no
+  // data yet). Woodpecker emits an event per step change of every pipeline,
+  // including the manual validation runs of main the board doesn't show —
+  // those must not turn into a reload each, or the page refreshes non-stop.
+  function applyEvent(repoId, p) {
+    const repo = state.repos.find(r => r.id === repoId), d = state.data[repoId];
+    if (!repo || !d || !p || d.phase !== 'meta') return false;   // a load in progress is patched too: it re-reads the same data anyway
+    const upsert = (runs, pipe) => {
+      const t = trimPipe(pipe), i = runs.findIndex(x => x.number === t.number);
+      if (i >= 0) runs[i] = t; else if (!runs.length || t.number > runs[0].number) runs.unshift(t); else return null;
+      return runs[0];
+    };
+    const finished = !LIVE.includes(p.status);
+    if (p.event === 'pull_request') {
+      const n = prNumOf(p), pr = d.prs.find(x => x.number === n);
+      if (!pr) return false;
+      const wasHead = pr.pipe?.number;
+      const latest = upsert(pr.runs, p); if (!latest) return true;
+      pr.pipe = latest; pr.stale = !!(pr.pipe && pr.headSha && pr.pipe.commit !== pr.headSha);
+      pr.runs = dropSuperseded(pr.runs); if (pr.runs.length > HISTORY) pr.runs.length = HISTORY;
+      pc.pipes[`${repoId}/${n}`] = { headSha: pr.headSha, runs: pr.runs.slice(0, HISTORY) }; pcSave();
+      if (finished) detailCache.delete(`${repoId}/${p.number}`);
+      if (finished && wasHead !== latest.number) prReportCache.clear();
+    } else if (p.event === 'push' && p.branch === repo.default_branch) {
+      const latest = upsert(d.mainHist, p); if (!latest) return true;
+      const newMain = d.main?.number !== latest.number;
+      d.main = latest; d.mainHist = dropSuperseded(d.mainHist); if (d.mainHist.length > HISTORY) d.mainHist.length = HISTORY;
+      detailCache.delete(`${repoId}/${p.number}`);
+      pipelineDetail(repoId, latest.number).then(x => { latest._detail = x; scheduleRender(); });
+      if (newMain && d.prMode === 'github') pmap(d.prs, META_PARALLEL, pr => mergeInfo(repo, pr, latest.commit || '').then(scheduleRender));
+    } else if (p.event === 'cron') {
+      const c = d.crons.find(x => x.def.name === p.sender);
+      if (!c) return false;
+      const latest = upsert(c.hist, p); if (!latest) return true;
+      c.latest = latest; if (c.hist.length > HISTORY) c.hist.length = HISTORY;
+      detailCache.delete(`${repoId}/${p.number}`);
+      pipelineDetail(repoId, latest.number).then(x => { latest._detail = x; scheduleRender(); });
+    } else return true;   // manual / deployment / tag runs, pushes to other branches: nothing on screen depends on them
+    stampUpdated();
+    scheduleRender();
+    return true;
+  }
+  async function flushPending() {
+    if (state.loading) { state.pendingTimer = setTimeout(flushPending, 1500); return; }
+    const ids = [...state.pending]; state.pending.clear();
+    const repos = state.repos.filter(r => ids.includes(r.id));
+    if (!repos.length) return;
+    await Promise.all(repos.map(r => loadRepo(r)));
+    stampUpdated();
+    render();
+    state.left = period();
+  }
+  function stampUpdated() {
+    el('updatedAt').innerHTML = `${state.live ? '<span class="live" title="Live: Woodpecker pushes pipeline events; the periodic poll is a safety net"></span>' : ''}updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+  }
+
+  // ---------------------------------------------------------------- refresh loop
+  function tick() {
+    if (!state.loading && (EMBEDDED ? !!window.WOODPECKER_USER : !!state.cfg.wpToken)) {
+      state.left -= 1;
+      if (state.left <= 0) { state.left = period(); loadAll(); }
+    }
+    const frac = state.left / period();
+    el('ringProg').style.strokeDashoffset = String(56.5 * (1 - Math.max(0, Math.min(1, frac))));
+    if (state.left % 30 === 0 && state.repos.length && !state.loading) refreshAgo();
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !state.live && state.left < REFRESH_SEC / 2) loadAll(); });
+
+  loadCfg();
+  applyTheme();
+  wire();
+  loadAll();
+  state.timer = setInterval(tick, 1000);
+
+})();
