@@ -8,7 +8,7 @@ that the queue drains. It runs inside the Woodpecker UI on the viewer's own
 session, or standalone as a static page.
 
 On top, the latest build of the default branch and every cron job; below it
-four tabs.
+eight tabs.
 
 - **Actions** (default) — the plan for the logged-in GitHub login: what each of
   their open PRs is blocked on and what they owe others as a reviewer, one
@@ -73,6 +73,48 @@ four tabs.
   `pulls/comments` list; open PRs cost nothing extra. The proxy needs
   `pulls/comments` in its allowlist; without it the board asks per PR, only
   for PRs a human reviewed.
+- **Flow** — where a merged PR's time went, from opened to merged, in working
+  hours (Mon–Fri UTC, the Streaks clock). At every instant a PR is in one
+  stage, first match wins: draft; CI red (a failed pipeline's end until the
+  next pipeline); CI running; then its review state — waiting for review,
+  waiting for the author (changes requested, or a reviewer's comment), waiting
+  to merge (approved, nothing standing against it). A push hands a
+  changes-requested PR back to review and keeps an approval; an author who
+  answers only in comments stays "waiting for the author" until they push. A
+  hero with the median ready → merged time and the team's biggest wait, the
+  median per stage, and every merged PR as a bar of its stages (click one for
+  its timeline). No GitHub requests beyond Streaks' history; CI stages come
+  from the Woodpecker pipeline list.
+- **Weekly digest** — a newspaper of one Mon–Sun week (UTC): the merged PRs
+  grouped by conventional-commit type (ticket keys and DNM/WIP tags before the
+  type are skipped), the most reviewed one as the lead story, tickets,
+  contributors and, for the primary repo with a reports host, the week's
+  nightly perf. "Copy for Slack" / "Markdown" put a paste-ready summary on
+  the clipboard; prev / next walk the weeks the 30-day history covers. Built
+  from Streaks' history: no new requests.
+- **CI weather** — flaky steps, from Woodpecker only. A step flakes when the
+  same commit both fails and passes it (restarts, repeated runs; manual runs
+  only with "+ manual runs", since upstream validation builds may be red). A
+  forecast for this week against the last, a weather map of the flakiest
+  steps × days, the ranking with flake rate, real failures, PRs hit and the
+  agent time lost to reruns (a restart or a repeated manual run that only
+  chased flakes; not the next night's cron), and the recent flakes with
+  links to the failing and the passing pipeline. Flakes across different
+  commits aren't claimed: nothing proves the change in between was unrelated.
+- **CI minutes** — where the agent time of the last 28 days went: this week
+  against the last, the queue wait for an agent, the superseded share (killed
+  runs), per day by architecture (arm64 from a `-arm64` workflow suffix), an
+  animated treemap of workflows (click one for its steps; "Superseded" shows
+  only the wasted time), per event, and the most expensive PRs.
+
+  CI weather, CI minutes and Flow share one pipeline history: every pipeline
+  of the last 28 days, its detail trimmed to ~1–2 KB and kept in its own
+  localStorage key (a busy repo: ~700 pipelines, ~1.2 MB), so a quota error
+  there never touches the main cache. First open: the list and every
+  pipeline's detail once (Orthus: ~700 same-origin requests, ~30 s,
+  rendering as it goes); afterwards the first list page and whatever
+  finished since, re-listed at most every 2 minutes while such a tab is open.
+  None of it touches GitHub.
 - **Main · perf & coverage** — the benchmark baseline, the lcov coverage
   baseline, and a nightly comparison report with a night-over-night trend,
   read from a reports host (see `reports` in the config). Only for the
@@ -149,6 +191,7 @@ same way through `reports.proxyPath`.
 | Builds, crons, workflows, step logs | Woodpecker API, same origin |
 | Open PRs, mergeability, reviewers, review timeline, inline threads | GitHub API through `/github/…` |
 | Open PRs (a repo the proxy token cannot read) | Woodpecker `/api/repos/<id>/pull_requests` |
+| Pipeline history of the last 28 days, workflow and step timings (CI weather, CI minutes, Flow) | Woodpecker API, same origin |
 | Benchmark / coverage tables per PR | the CI's report comments (`reportMarkers`), or the `publish` / `coverage` step logs |
 | Benchmark baseline, coverage baseline, nightly report | the reports host through `reports.proxyPath` |
 
@@ -165,6 +208,9 @@ from the reports host itself or a reports base URL is set in settings.
 node tests/matrix_test.js     # the theorem over the whole state space (~1 min)
 node tests/timeline_test.js   # the review timeline fold
 node tests/game_test.js       # the Streaks tab: working-time clock, review debts, streaks, badges
+node tests/runs_test.js       # CI minutes and CI weather: trimmed pipelines, agent time, flakes
+node tests/digest_test.js     # the Weekly digest: titles, the week's grouping, the summaries
+node tests/flow_test.js       # Flow: the stages of a merged PR in working time
 ```
 
 ## License
