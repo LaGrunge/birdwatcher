@@ -7,9 +7,13 @@ open pull requests of your repositories into one plan: who owes which move so
 that the queue drains. It runs inside the Woodpecker UI on the viewer's own
 session, or standalone as a static page.
 
-On top, the latest build of the default branch and every cron job; below it
-eight tabs.
+Nine tabs. On a desktop (1200 px and wider) they sit in a rail under the
+logo, one button per tab with its own icon and colour, grouped Now / Team /
+CI, with the same counts as the tab strip narrower screens keep.
 
+- **Latest** — the latest build of the default branch and every cron job, as
+  cards or a compact strip (Collapse / Details), with each one's recent runs
+  and failed steps; the count is how many of them are red.
 - **Actions** (default) — the plan for the logged-in GitHub login: what each of
   their open PRs is blocked on and what they owe others as a reviewer, one
   imperative heading per bucket with the PRs under it. The buckets, first match
