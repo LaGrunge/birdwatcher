@@ -91,9 +91,10 @@ CI, with the same counts as the tab strip narrower screens keep.
   from the Woodpecker pipeline list.
 - **Weekly digest** — a newspaper of one Mon–Sun week (UTC): the merged PRs
   grouped by conventional-commit type (ticket keys and DNM/WIP tags before the
-  type are skipped), the most reviewed one as the lead story, tickets,
-  contributors and, for the primary repo with a reports host, the week's
-  nightly perf. "Copy for Slack" / "Markdown" put a paste-ready summary on
+  type are skipped), a lead story (breaking changes first, then features,
+  the most reviewed within each), tickets, contributors and, for the primary
+  repo with a reports host, the week's nightly perf as the median of its
+  nightlies against the median of the week before. "Copy for Slack" / "Markdown" put a paste-ready summary on
   the clipboard; prev / next walk the weeks the 30-day history covers. Built
   from Streaks' history: no new requests.
 - **CI weather** — flaky steps, from Woodpecker only. A step flakes when the

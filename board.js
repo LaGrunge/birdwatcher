@@ -797,14 +797,24 @@
       byTracker: [...trackers.values()].sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true })), untracked,
       authors: [...authors].map(([login, n]) => ({ login, n })).sort((a, b) => b.n - a.n || a.login.localeCompare(b.login)),
       breaking: merged.filter(p => ccType(p.title)?.breaking),
+      lead: leadOf(merged),
     };
   }
-  // The first and the last nightly inside [from, to); nights: [{ date: 'YYYY-MM-DD', … }], get(night) → { ratio, geo }.
+  // The lead story: breaking changes first, then features, then the rest; the
+  // most reviewed PR within a rank, the latest merge on a tie.
+  const reviewsOf = p => (p.log || []).filter(e => e[0] === 'r').length;
+  const leadRank = p => { const cc = ccType(p.title); return cc?.breaking ? 0 : cc?.type === 'feat' ? 1 : 2; };
+  const leadOf = prs => prs.slice().sort((a, b) => leadRank(a) - leadRank(b) || reviewsOf(b) - reviewsOf(a) || b.merged - a.merged)[0] || null;
+  // The week's nightly perf as the median of its nightlies against the median of
+  // the week before, so one odd night doesn't swing it; nights: [{ date: 'YYYY-MM-DD', … }], get(night) → { ratio, geo }.
+  const median = xs => { const v = xs.filter(x => x != null).sort((a, b) => a - b); return v.length ? (v.length % 2 ? v[v.length >> 1] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null; };
   function weekPerf(nights, from, to, get) {
-    const inWeek = (nights || []).filter(n => { const t = Date.parse(n.date + 'T12:00:00Z') / 1000; return t >= from && t < to; });
-    if (inWeek.length < 2) return null;
-    const a = get(inWeek[0]), b = get(inWeek[inWeek.length - 1]);
-    return { first: inWeek[0].date, last: inWeek[inWeek.length - 1].date, nights: inWeek.length, ratio: [a.ratio, b.ratio], geo: [a.geo, b.geo], series: inWeek.map(n => get(n).ratio) };
+    const within = (a, b) => (nights || []).filter(n => { const t = Date.parse(n.date + 'T12:00:00Z') / 1000; return t >= a && t < b; }).map(n => ({ date: n.date, ...get(n) }));
+    const cur = within(from, to), prev = within(from - 7 * DAY, from);
+    if (!cur.length) return null;
+    const med = (w, k) => median(w.map(n => n[k]));
+    return { first: cur[0].date, last: cur[cur.length - 1].date, nights: cur.length, prevNights: prev.length,
+      ratio: [med(prev, 'ratio'), med(cur, 'ratio')], geo: [med(prev, 'geo'), med(cur, 'geo')], series: cur.map(n => n.ratio) };
   }
   // A paste-ready summary. fmt 'slack' (mrkdwn: *bold*, <url|text>) or 'md' (GitHub markdown).
   function digestText(dg, repoName, fmt, who = l => l, perf = null, perfLabels = null) {
@@ -819,7 +829,7 @@
     }
     if (perf && perfLabels) {
       const r = perf.ratio, g = perf.geo, f = (x, dgt) => x == null ? '—' : x.toFixed(dgt);
-      out.push('', `${bold('Perf')}: ${perfLabels.ratio} ${f(r[0], 1)}% → ${f(r[1], 1)}% · ${perfLabels.geo} ${f(g[0], 2)} s → ${f(g[1], 2)} s (nightlies ${perf.first} → ${perf.last})`);
+      out.push('', `${bold('Perf')}, weekly median, last week → this week: ${perfLabels.ratio} ${f(r[0], 1)}% → ${f(r[1], 1)}% · ${perfLabels.geo} ${f(g[0], 2)} s → ${f(g[1], 2)} s (${perf.nights} nightl${perf.nights === 1 ? 'y' : 'ies'} ${perf.first} → ${perf.last})`);
     }
     return out.join('\n');
   }
@@ -1795,9 +1805,9 @@
   // one button per view with its own icon and colour, grouped, with the
   // same counts as the tabs. Narrow screens keep the strip (CSS decides).
   const RAIL = {
-    latest:  { g: 'Now',  c: '#16a34a', i: '<path d="M3 12h4l3 8 4-16 3 8h4"/>' },
-    actions: { g: 'Now',  c: '#2563eb', i: '<path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/>' },
-    prs:     { g: 'Now',  c: '#7c3aed', i: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4"/><path d="M13 3.5L10.5 6 13 8.5"/>' },
+    latest:  { g: '',     c: '#16a34a', i: '<path d="M3 12h4l3 8 4-16 3 8h4"/>' },
+    actions: { g: '',     c: '#2563eb', i: '<path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/>' },
+    prs:     { g: '',     c: '#7c3aed', i: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4"/><path d="M13 3.5L10.5 6 13 8.5"/>' },
     streaks: { g: 'Team', c: '#ea580c', i: '<path d="M12 22c4 0 7-3 7-7 0-4-3-6-4-10-2 2-3 4-3 6-1-1-2-2-2-4-3 3-5 5-5 8 0 4 3 7 7 7z"/>' },
     flow:    { g: 'Team', c: '#0891b2', i: '<path d="M3 7h6l3 5 3-5h6"/><path d="M3 17h6l3-5"/><path d="M15 17h6"/>' },
     digest:  { g: 'Team', c: '#475569', i: '<path d="M4 5h13v14a1 1 0 0 0 1 1H6a2 2 0 0 1-2-2z"/><path d="M17 9h3v9a2 2 0 0 1-2 2"/><path d="M7 9h7M7 13h7M7 16h4"/>' },
@@ -1813,7 +1823,7 @@
       groups[groups.length - 1].list.push(`<button class="rail-btn ${k === view ? 'active' : ''}" data-view="${k}" style="--ic:${r.c}" title="${esc(l)}">
         <span class="ri"><svg viewBox="0 0 24 24">${r.i}</svg></span><span class="rl">${esc(l.replace(' · perf & coverage', ''))}</span>${n != null ? `<span class="rc" style="--cc:${c || 'var(--text-3)'}">${n}</span>` : ''}</button>`);
     }
-    setHtml(el('rail'), groups.map(g => `<div class="rail-group"><div class="rail-h">${esc(g.g)}</div>${g.list.join('')}</div>`).join(''));
+    setHtml(el('rail'), groups.map(g => `<div class="rail-group">${g.g ? `<div class="rail-h">${esc(g.g)}</div>` : ''}${g.list.join('')}</div>`).join(''));
   }
 
   // ---------------------------------------------------------------- rendering: page
@@ -2454,7 +2464,6 @@
     if (!dg) return head + `<div class="dg"><div class="sk sk-card"></div></div>`;
     const prA = p => `<a class="mono" href="${esc(safeUrl(p.url))}" target="_blank" rel="noopener noreferrer">#${p.number}</a>`;
     const tix = p => (p.keys || tickets(p)).map(([k, u]) => `<a class="dg-tk" href="${esc(safeUrl(u))}" target="_blank" rel="noopener noreferrer">${esc(k)}</a>`).join('');
-    const reviewsOf = p => (p.log || []).filter(e => e[0] === 'r').length;
     const thu = new Date((dg.week + 3) * DAY * 1000), issue = Math.floor((thu - Date.UTC(thu.getUTCFullYear(), 0, 1)) / (7 * DAY * 1000)) + 1;   // ISO week number
     let html = head + `<div class="dg"><article class="card wide dg-paper" style="--sc:var(--text)">
       <header class="dg-masthead"><div class="dg-dateline"><span>${esc(range)}</span><span>No. ${issue}</span><span>${esc(repo.full_name)}</span></div>
@@ -2465,9 +2474,8 @@
     if (!dg.n) {
       html += `<div class="dg-quiet"><div class="dg-quiet-t">Quiet week.</div><p class="muted">Nothing was merged ${state.week === 0 ? 'yet this week' : 'this week'}.</p></div>`;
     } else {
-      const lead = dg.merged.slice().sort((a, b) => reviewsOf(b) - reviewsOf(a) || b.merged - a.merged)[0];
-      const leadCc = ccType(lead.title);
-      html += `<section class="dg-lead"><div class="dg-kicker">${esc(leadCc ? (CC_TYPES[leadCc.type] || 'Change') : 'Top story')}${leadCc?.scope ? ` · ${esc(leadCc.scope)}` : ''}</div>
+      const lead = dg.lead, leadCc = ccType(lead.title);
+      html += `<section class="dg-lead"><div class="dg-kicker">${esc(leadCc?.breaking ? 'Breaking' : leadCc ? (CC_TYPES[leadCc.type] || 'Change') : 'Top story')}${leadCc?.scope ? ` · ${esc(leadCc.scope)}` : ''}</div>
         <h2><a href="${esc(safeUrl(lead.url))}" target="_blank" rel="noopener noreferrer">${esc(subjectOf(lead))}</a></h2>
         <div class="dg-byline">${ghAv(lead.author, 'dg-av')}<span>by <b>${esc(shortLogin(lead.author))}</b> · merged ${esc(fmtD(lead.merged, { weekday: 'long' }))} · ${reviewsOf(lead)} review${reviewsOf(lead) === 1 ? '' : 's'}</span>${prA(lead)}${tix(lead)}</div></section>`;
       const sections = dg.byType.map(g => ({ ...g, rest: g.prs.filter(p => p.number !== lead.number) })).filter(g => g.rest.length);   // the lead story isn't repeated below
@@ -2480,7 +2488,7 @@
         ${dg.perf ? `<section><div class="dg-kicker">Performance this week</div><div class="dg-perf">
           ${metric(dg.perfLabels.ratio, dg.perf.ratio[1] == null ? null : nf(dg.perf.ratio[1], 1), '%', deltaBadge(pctDelta(dg.perf.ratio[1], dg.perf.ratio[0])))}
           ${metric(dg.perfLabels.geo, dg.perf.geo[1] == null ? null : nf(dg.perf.geo[1], 2), 's', deltaBadge(pctDelta(dg.perf.geo[1], dg.perf.geo[0]), false))}
-        </div>${sparkline(dg.perf.series, { h: 40, fmt: v => nf(v, 1), unit: '%' })}<div class="faint dg-untracked">nightlies ${esc(dg.perf.first)} → ${esc(dg.perf.last)}</div></section>` : ''}
+        </div>${sparkline(dg.perf.series, { h: 40, fmt: v => nf(v, 1), unit: '%' })}<div class="faint dg-untracked">median of ${dg.perf.nights} nightl${dg.perf.nights === 1 ? 'y' : 'ies'} (${esc(dg.perf.first)} → ${esc(dg.perf.last)}) vs ${dg.perf.prevNights ? `${dg.perf.prevNights} the week before` : 'no nightlies the week before'}</div></section>` : ''}
       </div>`;
     }
     return html + `</article></div>`;

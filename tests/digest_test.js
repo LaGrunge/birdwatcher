@@ -19,7 +19,7 @@ const prelude = `
   const tsOf = iso => iso ? Math.floor(new Date(iso) / 1000) : 0;
   const isBot = u => !u || u.type === 'Bot';
 `;
-const G = new Function(prelude + code + '\nreturn { ccType, subjectOf, digestOf, digestText, weekPerf, weekStart, dayOf, DAY };')();
+const G = new Function(prelude + code + '\nreturn { ccType, subjectOf, digestOf, digestText, weekPerf, leadOf, weekStart, dayOf, DAY };')();
 
 const T = iso => Math.floor(new Date(iso) / 1000);
 let failed = 0;
@@ -68,13 +68,27 @@ check('the Slack and Markdown summaries', () => {
     '*orthus — week of Sep 21–Sep 27*: 2 PRs merged by 2 people\n\n*Features*\n• alpha (<https://gh/pr/1|#1>, <https://jira/ORTH-5|ORTH-5>) — @alice\n\n*Fixes*\n• beta (<https://gh/pr/2|#2>) — @bob');
   assert.ok(G.digestText(dg, 'orthus', 'md').includes('• alpha ([#1](https://gh/pr/1), [ORTH-5](https://jira/ORTH-5)) — alice'));
 });
-check('the week\'s perf: first and last nightly inside it, none with fewer than two', () => {
-  const nights = ['2026-09-20', '2026-09-21', '2026-09-23', '2026-09-27', '2026-09-28'].map((date, i) => ({ date, r: 90 + i, g: 1.3 - i / 10 }));
-  const P = G.weekPerf(nights, monday * G.DAY, (monday + 7) * G.DAY, n => ({ ratio: n.r, geo: n.g }));
-  assert.deepStrictEqual([P.first, P.last, P.nights, P.ratio], ['2026-09-21', '2026-09-27', 3, [91, 93]]);
-  assert.strictEqual(G.weekPerf(nights.slice(0, 2), monday * G.DAY, (monday + 7) * G.DAY, n => ({ ratio: n.r, geo: n.g })), null);
+check('the week\'s perf: the median of its nightlies against the week before', () => {
+  const nights = [['2026-09-14', 80, 2], ['2026-09-16', 99, 1.6], ['2026-09-18', 82, 1.8],
+    ['2026-09-21', 91, 1.3], ['2026-09-23', 60, 9], ['2026-09-26', 93, 1.1], ['2026-09-27', 95, 1.0], ['2026-09-28', 10, 1]]
+    .map(([date, r, g]) => ({ date, r, g }));
+  const get = n => ({ ratio: n.r, geo: n.g });
+  const P = G.weekPerf(nights, monday * G.DAY, (monday + 7) * G.DAY, get);
+  assert.deepStrictEqual([P.first, P.last, P.nights, P.prevNights, P.ratio, P.geo.map(x => +x.toFixed(6))], ['2026-09-21', '2026-09-27', 4, 3, [82, 92], [1.8, 1.2]]);
+  const lone = G.weekPerf(nights.slice(3), monday * G.DAY, (monday + 7) * G.DAY, get);
+  assert.deepStrictEqual([lone.prevNights, lone.ratio[0]], [0, null]);
+  assert.strictEqual(G.weekPerf(nights.slice(0, 3), monday * G.DAY, (monday + 7) * G.DAY, get), null);
   const text = G.digestText(G.digestOf([], monday, keysOf), 'orthus', 'slack', l => l, P, { ratio: 'TPC-C', geo: 'TPC-H' });
-  assert.ok(text.endsWith('*Perf*: TPC-C 91.0% → 93.0% · TPC-H 1.20 s → 1.00 s (nightlies 2026-09-21 → 2026-09-27)'), text);
+  assert.ok(text.endsWith('*Perf*, weekly median, last week → this week: TPC-C 82.0% → 92.0% · TPC-H 1.80 s → 1.20 s (4 nightlies 2026-09-21 → 2026-09-27)'), text);
+});
+check('the lead story: breaking, then a feature, then the most reviewed, then the latest', () => {
+  const rv = n => Array.from({ length: n }, () => ['r', 0, 'x', 'approved', 0]);
+  const pr = (number, title, reviews, merged) => ({ number, title, merged, log: rv(reviews) });
+  const lead = xs => G.leadOf(xs).number;
+  assert.strictEqual(lead([pr(1, 'fix: a', 9, 1), pr(2, 'feat: b', 1, 2), pr(3, 'feat!: c', 0, 3)]), 3);
+  assert.strictEqual(lead([pr(1, 'fix: a', 9, 1), pr(2, 'feat: b', 1, 2), pr(4, 'feat: d', 2, 1)]), 4);
+  assert.strictEqual(lead([pr(1, 'fix: a', 2, 1), pr(2, 'chore: b', 2, 5), pr(3, 'misc', 1, 9)]), 2);
+  assert.strictEqual(G.leadOf([]), null);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
