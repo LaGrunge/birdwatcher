@@ -8,7 +8,7 @@ that the queue drains. It runs inside the Woodpecker UI on the viewer's own
 session, or standalone as a static page.
 
 On top, the latest build of the default branch and every cron job; below it
-three tabs.
+four tabs.
 
 - **Actions** (default) — the plan for the logged-in GitHub login: what each of
   their open PRs is blocked on and what they owe others as a reviewer, one
@@ -52,6 +52,27 @@ three tabs.
   comments (CI narration) do not count.
 - **Pull requests** — every open PR with CI status, mergeability, reviewers,
   and filters, including the same blocker buckets ("Blocked on: …").
+- **Streaks** — review streaks and achievements over the last 30 days of open
+  and closed PRs. A reviewer owes a review from a request (or a re-request, or
+  the author's push after their changes-requested verdict) until their next
+  review of that PR; drafting the PR, removing the request or closing the PR
+  cancels the debt. It is due one working day later (Mon–Fri, UTC, the same
+  clock for every viewer). A working day is good when it closes a debt on
+  time and bad when one goes overdue; days with neither don't count, so the
+  streak is review days in a row with nobody kept waiting. Badges, bronze to
+  gold by count: *Lightning* (answered a request within a working hour),
+  *Second look* (re-reviewed within 4 working hours of the push that answered
+  you), *Deep dive* (5+ inline comments in one review), *Rescuer* (unasked,
+  the first review of a PR that had waited 2+ working days), *Inbox zero* (3+
+  on-time reviews in a day, ending it owing none), and streaks of 5, 10 and
+  20 days. It rewards answering, not approving, so rubber-stamping earns
+  nothing. Your card, then a team feed of who earned what; no ranking. The
+  closed PRs load only when the tab is opened and are re-listed at most every
+  10 minutes: one timeline request per closed PR, once (cached by
+  `updated_at`), plus the month's inline review comments from the repo-wide
+  `pulls/comments` list; open PRs cost nothing extra. The proxy needs
+  `pulls/comments` in its allowlist; without it the board asks per PR, only
+  for PRs a human reviewed.
 - **Main · perf & coverage** — the benchmark baseline, the lcov coverage
   baseline, and a nightly comparison report with a night-over-night trend,
   read from a reports host (see `reports` in the config). Only for the
@@ -143,6 +164,7 @@ from the reports host itself or a reports base URL is set in settings.
 ```bash
 node tests/matrix_test.js     # the theorem over the whole state space (~1 min)
 node tests/timeline_test.js   # the review timeline fold
+node tests/game_test.js       # the Streaks tab: working-time clock, review debts, streaks, badges
 ```
 
 ## License
