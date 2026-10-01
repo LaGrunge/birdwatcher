@@ -28,22 +28,22 @@ const check = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (
 check('conventional-commit titles, behind ticket keys and DNM tags', () => {
   assert.deepStrictEqual(G.ccType('feat(api)!: add x'), { type: 'feat', scope: 'api', breaking: true, subject: 'add x' });
   assert.deepStrictEqual(G.ccType('Fix: y'), { type: 'fix', scope: '', breaking: false, subject: 'y' });
-  assert.strictEqual(G.ccType('ORTH-273 fix(handler): release cursors').subject, 'release cursors');
-  assert.strictEqual(G.ccType('ORTH-112: fix(handler): name the row').type, 'fix');
+  assert.strictEqual(G.ccType('PROJ-273 fix(handler): release cursors').subject, 'release cursors');
+  assert.strictEqual(G.ccType('PROJ-112: fix(handler): name the row').type, 'fix');
   assert.strictEqual(G.ccType('DNM feat(ddl): partitions').type, 'feat');
-  assert.strictEqual(G.ccType('ORTH-12 add z'), null);
+  assert.strictEqual(G.ccType('PROJ-12 add z'), null);
   assert.strictEqual(G.ccType('chore: '), null);
   assert.strictEqual(G.ccType('wip(x): nope'), null);   // not a type
-  assert.strictEqual(G.subjectOf({ title: 'ORTH-12 add z' }), 'add z');
+  assert.strictEqual(G.subjectOf({ title: 'PROJ-12 add z' }), 'add z');
 });
 
 const monday = G.weekStart(G.dayOf(T('2026-09-23T00:00:00Z')));   // Mon Sep 21
 const pr = (number, title, merged, author = 'alice', extra = {}) => ({ number, title, url: `https://gh/pr/${number}`, author, merged: T(merged), ...extra });
-const keysOf = p => [...p.title.matchAll(/\b(ORTH)-(\d+)\b/g)].map(m => [`${m[1]}-${m[2]}`, `https://jira/${m[1]}-${m[2]}`]);
+const keysOf = p => [...p.title.matchAll(/\b(PROJ)-(\d+)\b/g)].map(m => [`${m[1]}-${m[2]}`, `https://jira/${m[1]}-${m[2]}`]);
 const prs = [
-  pr(1, 'ORTH-5 feat(core): alpha', '2026-09-21T10:00:00Z'),
+  pr(1, 'PROJ-5 feat(core): alpha', '2026-09-21T10:00:00Z'),
   pr(2, 'fix: beta', '2026-09-22T10:00:00Z', 'bob'),
-  pr(3, 'ORTH-5 refactor!: gamma', '2026-09-23T10:00:00Z'),
+  pr(3, 'PROJ-5 refactor!: gamma', '2026-09-23T10:00:00Z'),
   pr(4, 'tidy things up', '2026-09-24T10:00:00Z', 'bob'),
   pr(5, 'feat: next week', '2026-09-28T00:00:00Z'),   // Monday 00:00 of the next week
   pr(6, 'feat: last week', '2026-09-20T23:59:59Z'),
@@ -57,16 +57,16 @@ check('the week holds exactly the PRs merged Mon 00:00 to Sun 24:00 UTC', () => 
 check('grouped by type in a fixed order with "other" last, by ticket, and by author', () => {
   const dg = G.digestOf(prs, monday, keysOf);
   assert.deepStrictEqual(dg.byType.map(g => [g.type, g.prs.map(p => p.number)]), [['feat', [1]], ['fix', [2]], ['refactor', [3]], ['other', [4]]]);
-  assert.deepStrictEqual(dg.byTracker.map(t => [t.key, t.prs.map(p => p.number)]), [['ORTH-5', [1, 3]]]);
+  assert.deepStrictEqual(dg.byTracker.map(t => [t.key, t.prs.map(p => p.number)]), [['PROJ-5', [1, 3]]]);
   assert.deepStrictEqual(dg.untracked.map(p => p.number), [2, 4]);
   assert.deepStrictEqual(dg.authors, [{ login: 'alice', n: 2 }, { login: 'bob', n: 2 }]);
   assert.deepStrictEqual(dg.breaking.map(p => p.number), [3]);
 });
 check('the Slack and Markdown summaries', () => {
   const dg = G.digestOf(prs.slice(0, 2), monday, keysOf);
-  assert.strictEqual(G.digestText(dg, 'orthus', 'slack', l => '@' + l),
-    '*orthus — week of Sep 21–Sep 27*: 2 PRs merged by 2 people\n\n*Features*\n• alpha (<https://gh/pr/1|#1>, <https://jira/ORTH-5|ORTH-5>) — @alice\n\n*Fixes*\n• beta (<https://gh/pr/2|#2>) — @bob');
-  assert.ok(G.digestText(dg, 'orthus', 'md').includes('• alpha ([#1](https://gh/pr/1), [ORTH-5](https://jira/ORTH-5)) — alice'));
+  assert.strictEqual(G.digestText(dg, 'acme', 'slack', l => '@' + l),
+    '*acme — week of Sep 21–Sep 27*: 2 PRs merged by 2 people\n\n*Features*\n• alpha (<https://gh/pr/1|#1>, <https://jira/PROJ-5|PROJ-5>) — @alice\n\n*Fixes*\n• beta (<https://gh/pr/2|#2>) — @bob');
+  assert.ok(G.digestText(dg, 'acme', 'md').includes('• alpha ([#1](https://gh/pr/1), [PROJ-5](https://jira/PROJ-5)) — alice'));
 });
 check('the week\'s perf: the median of its nightlies against the week before', () => {
   const nights = [['2026-09-14', 80, 2], ['2026-09-16', 99, 1.6], ['2026-09-18', 82, 1.8],
@@ -78,7 +78,7 @@ check('the week\'s perf: the median of its nightlies against the week before', (
   const lone = G.weekPerf(nights.slice(3), monday * G.DAY, (monday + 7) * G.DAY, get);
   assert.deepStrictEqual([lone.prevNights, lone.ratio[0]], [0, null]);
   assert.strictEqual(G.weekPerf(nights.slice(0, 3), monday * G.DAY, (monday + 7) * G.DAY, get), null);
-  const text = G.digestText(G.digestOf([], monday, keysOf), 'orthus', 'slack', l => l, P, { ratio: 'TPC-C', geo: 'TPC-H' });
+  const text = G.digestText(G.digestOf([], monday, keysOf), 'acme', 'slack', l => l, P, { ratio: 'TPC-C', geo: 'TPC-H' });
   assert.ok(text.endsWith('*Perf*, weekly median, last week → this week: TPC-C 82.0% → 92.0% · TPC-H 1.80 s → 1.20 s (4 nightlies 2026-09-21 → 2026-09-27)'), text);
 });
 check('the lead story: breaking, then a feature, then the most reviewed, then the latest', () => {

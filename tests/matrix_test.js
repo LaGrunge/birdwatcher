@@ -3,7 +3,8 @@
 //
 //   For every open PR in every state the blocker matrix can see, either
 //     (a) somebody named owes a move — an author-side bucket, the admin bucket,
-//         or a reviewer task for at least one requested / reviewing login — or
+//         a reviewer task for at least one requested / reviewing login, or
+//         red main's owner when the PR fails only main's steps — or
 //     (b) the state is transient: CI in flight, review data still loading,
 //         GitHub still computing mergeability — or
 //     (c) the PR is parked as "do not merge", which dormant() ends after
@@ -27,7 +28,7 @@ for (const line of src) {
   if (line.includes('// @matrix-end')) { inside = false; continue; }
   if (inside || line.includes('// @matrix-line')) code += line + '\n';
 }
-const M = new Function(code + '\nreturn { classify, reviewerTask, orphan, BUCKETS, REVIEWER_TASKS, STATUS, LIVE, statusOf, SILENT_DAYS, DORMANT_DAYS };')();
+const M = new Function(code + '\nreturn { classify, reviewerTask, orphan, BUCKETS, REVIEWER_TASKS, STATUS, LIVE, statusOf, st, SILENT_DAYS, DORMANT_DAYS };')();
 
 const DAY = 86400, T = Math.floor(Date.now() / 1000);
 const PIPES = [null, 'success', 'failure', 'error', 'killed', 'canceled', 'skipped', 'declined', 'running', 'pending', 'blocked'];
@@ -37,8 +38,9 @@ const REVIEW = [null, ['approved', 'old'], ['approved', 'new'], ['changes_reques
 const AUTHOR = 'author', R1 = 'r1', R2 = 'r2';
 
 function* states() {
-  for (const draft of [false, true]) for (const pipeStatus of PIPES) for (const stale of pipeStatus ? [false, true] : [false]) for (const dnm of [false, true]) {
-    const base = { number: 1, title: dnm ? 'DNM: thing' : 'thing', author: AUTHOR, draft, url: '', pipe: pipeStatus ? { number: 7, status: pipeStatus, commit: 'a' } : null, stale, updated: T - 3 * DAY, requested: [] };
+  for (const draft of [false, true]) for (const pipeStatus of PIPES) for (const stale of pipeStatus ? [false, true] : [false]) for (const dnm of [false, true])
+  for (const mainRed of M.st(pipeStatus).bucket === 'red' ? [false, true] : [false]) {   // red on main's own failing steps; main's owner is the last merger
+    const base = { number: 1, title: dnm ? 'DNM: thing' : 'thing', author: AUTHOR, draft, url: '', pipe: pipeStatus ? { number: 7, status: pipeStatus, commit: 'a' } : null, stale, updated: T - 3 * DAY, requested: [], mainRed, mainOwner: mainRed ? 'merger' : '' };
     yield { ...base, rv: undefined, mergeable: undefined };   // meta not loaded yet
     for (const dormant of [false, true]) for (const authorAfterPush of [false, true]) for (const feedbackNew of [false, true]) for (const askedOld of [false, true]) for (const openThreads of [0, 1]) for (const baseGone of [false, true]) for (const [mergeable, mergeState] of MERGE) {
       const lastPush = dormant ? T - (M.DORMANT_DAYS + 6) * DAY : T - 5 * DAY;
@@ -83,7 +85,7 @@ const ms = Date.now() - t0;
 const show = pr => {
   const rv = pr.rv;
   const revs = rv ? Object.entries(rv.reviews).map(([l, r]) => `${l}:${r.state}${r.at < Math.max(rv.lastPush, rv.lastAuthorActivity) ? '(old)' : '(new)'}`).join(',') || '-' : 'n/a';
-  return `draft=${pr.draft} ci=${pr.pipe ? pr.pipe.status : 'none'} stale=${pr.stale} dnm=${/DNM/.test(pr.title)} mergeable=${pr.mergeable} state=${pr.mergeState} baseGone=${pr.baseGone} requested=[${(pr.requested || []).join(',')}] reviews=${revs} threads=${rv ? rv.openThreads : 'n/a'} feedback>author=${rv ? rv.lastFeedback > rv.lastAuthorActivity : 'n/a'} dormant=${rv ? (T - rv.lastAuthorActivity) / DAY > M.DORMANT_DAYS : 'n/a'}`;
+  return `draft=${pr.draft} ci=${pr.pipe ? pr.pipe.status : 'none'} mainRed=${pr.mainRed} stale=${pr.stale} dnm=${/DNM/.test(pr.title)} mergeable=${pr.mergeable} state=${pr.mergeState} baseGone=${pr.baseGone} requested=[${(pr.requested || []).join(',')}] reviews=${revs} threads=${rv ? rv.openThreads : 'n/a'} feedback>author=${rv ? rv.lastFeedback > rv.lastAuthorActivity : 'n/a'} dormant=${rv ? (T - rv.lastAuthorActivity) / DAY > M.DORMANT_DAYS : 'n/a'}`;
 };
 console.log(`${n.toLocaleString()} states in ${ms} ms · buckets reached ${reached.size}/${Object.keys(M.BUCKETS).length} · reviewer tasks reached ${tasks.size}/${Object.keys(M.REVIEWER_TASKS).length}`);
 const dead = [...Object.keys(M.BUCKETS).filter(k => !reached.has(k)), ...Object.keys(M.REVIEWER_TASKS).filter(k => !tasks.has(k))];

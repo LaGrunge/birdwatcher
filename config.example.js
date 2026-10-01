@@ -17,6 +17,18 @@ window.BIRDWATCHER_CONFIG = {
     PROJ: 'https://acme.atlassian.net/browse/',
   },
 
+  // A run's pinned inputs, read by plugins/kv-pins.js: the KEY=VALUE lines one
+  // step prints. When main or a cron goes red, the board compares them between
+  // the last green and the first red run, to tell a moved dependency from a
+  // code change. One entry, or a list of them (one per repo).
+  pins: {
+    repos: ['acme/app'],                 // omit for every repo
+    steps: ['resolve-deps'],             // the first of these a pipeline has is read
+    marker: 'Pinned inputs:',            // only the block after this line; omit for the whole log
+    ignore: ['APP_COMMIT'],              // keys that are not inputs (the run's own commit, a format version)
+    compare: { LIB_SHA: 'https://github.com/acme/lib/compare/{from}...{to}' },
+  },
+
   // HTML comment markers (<!-- ci-report -->) of the CI's PR report comments.
   reportMarkers: { bench: 'ci-report', cov: 'coverage-report' },
 

@@ -14,6 +14,29 @@ CI, with the same counts as the tab strip narrower screens keep.
 - **Latest** — the latest build of the default branch and every cron job, as
   cards or a compact strip (Collapse / Details), with each one's recent runs
   and failed steps; the count is how many of them are red.
+
+  A red main or a red cron is an **incident**, owned by whoever merged to
+  main last (not always fair, but always somebody: there are no on-call
+  rotas). A PR that was green was green on the old main, so the merge after
+  which main went red proves nothing alone: a flake, a moved dependency or
+  the agents break main too, and the board claims only what the runs show.
+  One red run is *unconfirmed*: rerun it. A rerun or the next run red on one
+  of the same steps confirms the break, and the first red run is compared
+  with the last green one: the code moved and the pins did not → *fix or
+  revert* (the merges in between are the suspects, with a compare link); a
+  pin moved and the code did not → *pin back or report upstream* (`LIB_SHA
+  1111aaaa → 3333cccc`, linked to the dependency's compare); both → *split
+  the suspects*, unless a suspect merge's own PR was green on the new pins
+  (matched by commit or subject among the PR runs the board already lists),
+  which clears them → *fix or revert*; neither → *check the agents*. A cron
+  whose runs print no pins can't rule a dependency out → *find the break*.
+  The pins come from a plugin (`plugins/kv-pins.js` and `pins` in the
+  config; see [Plugins](#plugins)), read once per finished run and cached;
+  without one the board compares commits only. The incident card sits on Latest and at the
+  top of its owner's Actions; "Who owes what" counts it under *Main*. A red
+  PR that fails only steps a confirmed main incident fails, in a run after
+  main's last green one, is *Main red*: main's owner moves first, its author
+  doesn't. Merging stays open.
 - **Actions** (default) — the plan for the logged-in GitHub login: what each of
   their open PRs is blocked on and what they owe others as a reviewer, one
   imperative heading per bucket with the PRs under it. The buckets, first match
@@ -116,7 +139,7 @@ CI, with the same counts as the tab strip narrower screens keep.
   of the last 28 days, its detail trimmed to ~1–2 KB and kept in its own
   localStorage key (a busy repo: ~700 pipelines, ~1.2 MB), so a quota error
   there never touches the main cache. First open: the list and every
-  pipeline's detail once (Orthus: ~700 same-origin requests, ~30 s,
+  pipeline's detail once (a busy repo: ~700 same-origin requests, ~30 s,
   rendering as it goes); afterwards the first list page and whatever
   finished since, re-listed at most every 2 minutes while such a tab is open.
   None of it touches GitHub.
@@ -196,9 +219,36 @@ same way through `reports.proxyPath`.
 | Builds, crons, workflows, step logs | Woodpecker API, same origin |
 | Open PRs, mergeability, reviewers, review timeline, inline threads | GitHub API through `/github/…` |
 | Open PRs (a repo the proxy token cannot read) | Woodpecker `/api/repos/<id>/pull_requests` |
+| Failed steps and pinned inputs of red main / cron runs (incidents) | Woodpecker API, same origin; the log of a plugin's `pins.steps` |
 | Pipeline history of the last 28 days, workflow and step timings (CI weather, CI minutes, Flow) | Woodpecker API, same origin |
 | Benchmark / coverage tables per PR | the CI's report comments (`reportMarkers`), or the `publish` / `coverage` step logs |
 | Benchmark baseline, coverage baseline, nightly report | the reports host through `reports.proxyPath` |
+
+### Plugins
+
+What only one repository's CI knows — which step prints a run's pinned
+inputs, in which format, and where two values of a pin can be compared —
+lives in a plugin, not in `board.js`. A plugin is a script that pushes an
+object onto `window.BIRDWATCHER_PLUGINS`; load it after `config.js` and
+before `board.js` (embedded: `cat config.js plugins/kv-pins.js board.js`).
+
+**`plugins/kv-pins.js`** covers the common case: a step that prints its
+pins as `KEY=VALUE` lines. It needs no code, only `pins` in `config.js`
+(see `config.example.js`): the repos, the step names, an optional marker
+line the block follows, the keys to ignore, and a compare URL template per
+key (`{from}`, `{to}`).
+
+For any other format, write your own from `plugin.example.js`. Every field
+is optional:
+
+| Field | |
+|---|---|
+| `repos` | full names the plugin applies to; default every repo |
+| `pins.steps` | step names that print a run's pinned inputs; the first one a pipeline has is read |
+| `pins.parse(log, kit)` | that step's log → `{ KEY: value }` or `null`; default `kit.kv(log)`, every `KEY=VALUE` line; `kit.kv(log, { marker, ignore })` reads only the block after the line holding `marker` |
+| `pins.link(key, from, to)` | a URL comparing two values of one pin, or `''` |
+
+A throw inside a plugin turns that feature off for the run, never the board.
 
 ### Standalone
 
@@ -216,6 +266,7 @@ node tests/game_test.js       # the Streaks tab: working-time clock, review debt
 node tests/runs_test.js       # CI minutes and CI weather: trimmed pipelines, agent time, flakes
 node tests/digest_test.js     # the Weekly digest: titles, the week's grouping, the summaries
 node tests/flow_test.js       # Flow: the stages of a merged PR in working time
+node tests/incident_test.js   # red main: owner, cause (flake, code, pins, environment), PRs it blocks
 ```
 
 ## License
