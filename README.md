@@ -323,11 +323,21 @@ budget: a cold 28 days is one pipeline list, one detail per pipeline and one
 log per failed parsed step (a busy repo: ~900 requests, ~30 s); afterwards
 one list page per `pollSec` plus whatever finished since. No GitHub requests.
 
-The server binds to `127.0.0.1` by default and has no auth of its own: put it
-behind the same forward auth as the board (embedded, `flakes.url` is a
-same-origin path) and list the board's origin in `allowOrigin` only when it
-runs standalone on another origin. It never writes anywhere but `dataDir`,
-and responses never carry the token.
+The server binds to `127.0.0.1` by default. Its token may read repos a
+caller can't, so each request is checked with the caller's own credentials:
+a repo is served only when Woodpecker answers `GET /api/repos/{id}` with 200
+for the Cookie or `Authorization` header the caller sent (cached a minute;
+no credentials, nothing served). Put it behind the same forward auth as the
+board (embedded, `flakes.url` is a same-origin path); an agent calls it with
+`Authorization: Bearer <its Woodpecker token>`. `checkAccess: false` turns
+the check off for a server only its owner reaches. List the board's origin
+in `allowOrigin` only when the board runs standalone on another origin. It
+never writes anywhere but `dataDir`, and responses never carry the token.
+
+Log text is written by the code under test, so whoever can run CI controls
+it: briefs quote it inside fences it cannot close and say, before quoting
+any, that it is evidence, never instructions. Lines are cut to 4096
+characters before any pattern runs on them.
 
 ## Tests
 

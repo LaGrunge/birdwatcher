@@ -11,9 +11,16 @@
 // Config (JSON, see server/flakes.example.json): server (where the API is
 // read; publicUrl, if set, is what links point to), repos, dataDir,
 // parsers (which steps hold tests, and how to read them), port, host,
-// basePath, days, pollSec, allowOrigin. Woodpecker is read with one token
-// from the environment; responses never carry it. Nothing here writes to
-// Woodpecker, GitHub or anywhere but dataDir.
+// basePath, days, pollSec, allowOrigin, checkAccess. Woodpecker is read with
+// one token from the environment; responses never carry it. Nothing here
+// writes to Woodpecker, GitHub or anywhere but dataDir.
+//
+// Access: that token may read repos the caller can't, so every request is
+// checked against Woodpecker with the caller's own credentials (the Cookie
+// and Authorization headers it sent): a repo is served only when
+// GET /api/repos/{id} answers 200 for them, cached for ACCESS_TTL. Without
+// credentials nothing is served. checkAccess: false turns this off, for a
+// server only its owner can reach (a local run).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -49,6 +56,7 @@ function readConfig(argv) {
     port: c.port || 8090, host: c.host || '127.0.0.1', basePath: (c.basePath || '/flakes').replace(/\/+$/, ''),
     days: Math.min(90, c.days || B.RUNS_DAYS), events: c.events === 'all' ? 'all' : 'ci',
     pollSec: c.pollSec || 120, parallel: c.parallel || 4, allowOrigin: c.allowOrigin || [],
+    checkAccess: c.checkAccess !== false,
   };
 }
 
@@ -173,8 +181,28 @@ function makeStore(cfg, wp) {
 //   /repos/{owner}/{name}/steps/{workflow}/{step}/brief  the board's step brief, its logs read on demand
 //   /repos/{owner}/{name}/logs/{pipeline}/{workflow}/{step}  one step log's excerpt (read on demand)
 //   /fingerprints/{fp}                        which test a ticket label points to
+const ACCESS_TTL = 60;   // seconds a caller's access to a repo is trusted before asking Woodpecker again
+function makeAccess(cfg) {
+  const cache = new Map();   // sha1(credentials) + repo id → { ok, at }
+  return async (req, R) => {
+    if (!cfg.checkAccess) return true;
+    const headers = {};
+    if (req.headers.cookie) headers.Cookie = req.headers.cookie;
+    if (req.headers.authorization) headers.Authorization = req.headers.authorization;
+    if (!headers.Cookie && !headers.Authorization) return false;
+    const k = crypto.createHash('sha1').update(`${headers.Cookie || ''}\n${headers.Authorization || ''}`).digest('hex') + `/${R.id}`;
+    const c = cache.get(k);
+    if (c && now() - c.at < ACCESS_TTL) return c.ok;
+    let ok = false;
+    try { ok = (await fetch(`${cfg.server}/api/repos/${R.id}`, { headers })).status === 200; } catch {}
+    if (cache.size > 5000) cache.clear();
+    cache.set(k, { ok, at: now() });
+    return ok;
+  };
+}
 function makeApi(cfg, store, stats) {
   const v1 = `${cfg.basePath}/v1`;
+  const canRead = makeAccess(cfg);
   const iso = t => t ? new Date(t * 1000).toISOString() : null;
   const pub = cfg.publicUrl || cfg.server;
   const links = (R, n, pid, id) => ({
@@ -206,16 +234,17 @@ function makeApi(cfg, store, stats) {
   ].sort((a, b) => b.at - a.at || b.n - a.n);
   const stepId = (R, n, key) => { const i = key.indexOf(' › '); return R.runs[n]?.wf?.find(w => w.n === key.slice(0, i))?.st?.[key.slice(i + 3)]?.[3] || 0; };
 
-  async function route(method, url) {
+  async function route(method, url, req) {
     if (method !== 'GET') return [405, { error: 'read-only API: GET only' }];
+    const readable = async () => (await Promise.all([...store.repos.values()].map(async R => (await canRead(req, R)) && R))).filter(Boolean);
     const u = new URL(url, 'http://x'), q = u.searchParams;
     if (!u.pathname.startsWith(v1 + '/') && u.pathname !== v1) return [404, { error: `not under ${v1}` }];
     const parts = u.pathname.slice(v1.length).split('/').filter(Boolean).map(decodeURIComponent);
     if (parts[0] === 'health') return [200, { ok: [...store.repos.values()].every(R => !R.state.errors.length), woodpeckerRequests: stats.requests, startedAt: iso(stats.startedAt),
-      repos: [...store.repos.values()].map(R => ({ repo: R.name, pipelines: Object.keys(R.runs).length, logsRead: R.logs.size, logsPending: R.state.logsPending, syncing: R.state.syncing, lastSync: iso(R.state.lastSync), errors: R.state.errors })) }];
-    if (parts[0] === 'repos' && parts.length === 1) return [200, { repos: [...store.repos.values()].map(R => ({ repo: R.name, id: R.id, forge: R.forge, tests: `${v1}/repos/${R.name}/tests`, steps: `${v1}/repos/${R.name}/steps` })) }];
+      repos: (await readable()).map(R => ({ repo: R.name, pipelines: Object.keys(R.runs).length, logsRead: R.logs.size, logsPending: R.state.logsPending, syncing: R.state.syncing, lastSync: iso(R.state.lastSync), errors: R.state.errors })) }];
+    if (parts[0] === 'repos' && parts.length === 1) return [200, { repos: (await readable()).map(R => ({ repo: R.name, id: R.id, forge: R.forge, tests: `${v1}/repos/${R.name}/tests`, steps: `${v1}/repos/${R.name}/steps` })) }];
     if (parts[0] === 'fingerprints' && parts[1]) {
-      for (const R of store.repos.values()) {
+      for (const R of await readable()) {
         const T = testsOf(R, { days: cfg.days, events: 'all' }).find(t => t.fingerprint === parts[1]);
         if (T) return [200, testSummary(R, T)];
       }
@@ -223,7 +252,7 @@ function makeApi(cfg, store, stats) {
     }
     if (parts[0] !== 'repos' || parts.length < 4) return [404, { error: 'unknown path', see: `${v1}/repos` }];
     const R = store.repos.get(`${parts[1]}/${parts[2]}`);
-    if (!R) return [404, { error: `repo ${parts[1]}/${parts[2]} is not served` }];
+    if (!R || !(await canRead(req, R))) return [404, { error: `repo ${parts[1]}/${parts[2]} is not served` }];
     const w = window_(q), rest = parts.slice(3);
     if (rest[0] === 'tests') {
       const all = testsOf(R, w);
@@ -286,7 +315,7 @@ function makeApi(cfg, store, stats) {
 
   return async (req, res) => {
     let status, body, type = 'application/json; charset=utf-8';
-    try { [status, body, type = type] = await route(req.method, req.url); }
+    try { [status, body, type = type] = await route(req.method, req.url, req); }
     catch (e) { status = 500; body = { error: e.message }; }
     const text = typeof body === 'string' ? body : JSON.stringify(body, null, 1);
     const etag = `"${crypto.createHash('sha1').update(text).digest('hex').slice(0, 16)}"`;

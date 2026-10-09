@@ -28,8 +28,10 @@ const wpStub = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x'), p = u.pathname;
   hits.push(p);
   const send = (code, v) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(v)); };
-  if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, {});
   let m;
+  // A caller's access check: a reader's cookie or token may see repo 5, nobody else.
+  if (p === '/api/repos/5' && req.headers.authorization !== `Bearer ${TOKEN}`) return send(req.headers.cookie === 'user_sess=reader' || req.headers.authorization === 'Bearer reader' ? 200 : 403, {});
+  if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, {});
   if (p === '/api/repos/lookup/acme/app') return send(200, { id: 5, full_name: 'acme/app', forge_url: 'https://forge/acme/app' });
   if (p === '/api/repos/5/pipelines') return send(200, u.searchParams.get('page') === '1' ? Object.values(PIPES).map(({ workflows, ...x }) => x).reverse() : []);
   if ((m = /^\/api\/repos\/5\/pipelines\/(\d+)$/.exec(p))) return PIPES[m[1]] ? send(200, PIPES[m[1]]) : send(404, {});
@@ -44,7 +46,7 @@ const check = async (name, fn) => { try { await fn(); console.log(`ok   ${name}`
   await new Promise(r => wpStub.listen(0, '127.0.0.1', r));
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flakes-test-'));
   const cfg = { server: `http://127.0.0.1:${wpStub.address().port}`, publicUrl: 'https://ci.example', token: TOKEN, repos: ['acme/app'], dataDir, parsers: [{ steps: ['mtr'], parser: 'mtr' }],
-    port: 0, host: '127.0.0.1', basePath: '/flakes', days: 28, events: 'ci', pollSec: 120, parallel: 2, allowOrigin: ['https://board.example'] };
+    port: 0, host: '127.0.0.1', basePath: '/flakes', days: 28, events: 'ci', pollSec: 120, parallel: 2, allowOrigin: ['https://board.example'], checkAccess: false };
   const wp = async p => { const r = await fetch(`${cfg.server}/api${p}`, { headers: { Authorization: `Bearer ${cfg.token}` } }); if (!r.ok) throw new Error(`${r.status} ${p}`); return r.json(); };
   const stats = { requests: 0, startedAt: NOW };
   const store = makeStore(cfg, wp), R = await store.open('acme/app');
@@ -114,6 +116,24 @@ const check = async (name, fn) => { try { await fn(); console.log(`ok   ${name}`
     assert.strictEqual((await get('/nope')).status, 404);
     bodies.push((await get('/health')).text);
     assert.ok(bodies.every(b => !b.includes(TOKEN)));
+  });
+  await check('with checkAccess, a repo is served only to callers Woodpecker lets read it', async () => {
+    const guarded = http.createServer(makeApi({ ...cfg, checkAccess: true }, store, stats));
+    await new Promise(r => guarded.listen(0, '127.0.0.1', r));
+    const g = (p, headers = {}) => fetch(`http://127.0.0.1:${guarded.address().port}/flakes/v1${p}`, { headers });
+    assert.strictEqual((await g('/repos/acme/app/tests')).status, 404);                                              // no credentials
+    assert.strictEqual((await g('/repos/acme/app/tests', { Cookie: 'user_sess=stranger' })).status, 404);            // logged in, no access
+    assert.strictEqual((await g('/repos/acme/app/tests', { Cookie: 'user_sess=reader' })).status, 200);
+    assert.strictEqual((await g('/repos/acme/app/tests/main.beta/brief', { Authorization: 'Bearer reader' })).status, 200);
+    assert.deepStrictEqual((await (await g('/repos', { Cookie: 'user_sess=stranger' })).json()).repos, []);
+    const fp = (await json('/repos/acme/app/tests')).tests[0].fingerprint;
+    assert.strictEqual((await g(`/fingerprints/${fp}`, { Cookie: 'user_sess=stranger' })).status, 404);
+    guarded.close();
+  });
+  await check('a brief fences log text it quotes and says it is untrusted', async () => {
+    const md = (await get('/repos/acme/app/tests/main.beta/brief')).text;
+    assert.ok(md.includes('untrusted data'));
+    assert.ok(md.indexOf('untrusted data') < md.indexOf('```text'));
   });
   await check('a restart from the data dir lists the first page and reads nothing else', async () => {
     hits.length = 0;
