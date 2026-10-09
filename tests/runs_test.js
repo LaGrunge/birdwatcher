@@ -21,13 +21,14 @@ const prelude = `
   const pc = { automation: [] };
   const pcSave = () => {};
 `;
-const G = new Function(prelude + code + '\nreturn { trimRun, minutes, pctile, prOf, archOf, weekStart, dayOf, DAY, flakes, verdictOf, sky, WX_EVENTS };')();
+const G = new Function(prelude + code + '\nreturn { trimRun, minutes, pctile, prOf, archOf, weekStart, dayOf, DAY, flakes, verdictOf, sky, WX_EVENTS, logExcerpt, logSig, recurring, flakeBrief, TEST_PARSERS, testParser, parserFor, testFlakes, whyClusters, reasonOf, testBrief, testFingerprint };')();
 
 const T = iso => Math.floor(new Date(iso) / 1000);
 let failed = 0;
 const check = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); } };
 
-const step = (name, state, a, b, type = 'commands') => ({ name, state, started: a, finished: b, type });
+let pids = 0;
+const step = (name, state, a, b, type = 'commands') => ({ name, state, started: a, finished: b, type, pid: ++pids });
 const t0 = T('2026-09-28T10:00:00Z');   // a Monday
 const detail = {
   number: 42, event: 'pull_request', status: 'failure', created: t0 - 60, started: t0, finished: t0 + 3000,
@@ -42,8 +43,9 @@ const detail = {
 
 check('a successful workflow keeps only its long steps, a failed one every step that ran', () => {
   const r = G.trimRun(detail);
-  assert.deepStrictEqual(r.wf[0].st, { build: ['s', 970] });
-  assert.deepStrictEqual(r.wf[1].st, { build: ['s', 2000], mtr: ['f', 900], lint: ['s', 50] });
+  assert.deepStrictEqual(r.wf[0].st, { build: ['s', 970, 2, 0] });
+  assert.deepStrictEqual(r.wf[1].st, { build: ['s', 2000, 5, 0], mtr: ['f', 900, 6, 0], lint: ['s', 50, 7, 0] });
+  assert.strictEqual(r.v, 2);
   assert.strictEqual(r.wf[1].fail, 'mtr');
   assert.strictEqual(r.wf[0].fail, '');
   assert.strictEqual(r.sha, 'abcdef012345');
@@ -180,6 +182,124 @@ check('the next night\'s cron on the same commit: a flake, but not a rerun and n
   assert.strictEqual(X.steps[0].flakes, 1);
   assert.strictEqual(X.lost, 0);
   assert.deepStrictEqual(X.attempts, { groups: 0, reruns: 0 });
+});
+
+check('a flake keeps both builds\' step pids (the step log links); a real failure lands in `real`', () => {
+  const X = G.flakes([
+    F(80, 'pull_request', 'i1', d1, [W('base', 'failure', d1, d1 + 600, { mtr: ['f', 300, 17] })]),
+    F(81, 'pull_request', 'i1', d1 + 3600, [W('base', 'failure', d1 + 3600, d1 + 4200, { mtr: ['s', 300, 23], unit: ['f', 20, 24] })], 80),
+    F(82, 'pull_request', 'i1', d1 + 7200, [W('base', 'failure', d1 + 7200, d1 + 7800, { unit: ['f', 20, 31] })], 80),
+  ], now);
+  const e = X.events.find(x => x.key === 'base › mtr');
+  assert.deepStrictEqual([e.n, e.pid, e.sec, e.passN, e.passPid], [80, 17, 300, 81, 23]);
+  assert.deepStrictEqual(X.real.map(x => [x.key, x.n, x.pid]), [['base › unit', 82, 31], ['base › unit', 81, 24]]);
+});
+check('a cached step without a pid still yields an event, linking to the pipeline', () => {
+  const X = G.flakes([
+    F(90, 'push', 'j1', d1, [W('base', 'failure', d1, d1 + 100, { mtr: ['f', 50] })]),
+    F(91, 'push', 'j1', d1 + 100, [W('base', 'success', d1 + 100, d1 + 200)], 90),
+  ], now);
+  assert.deepStrictEqual([X.events[0].pid, X.events[0].passPid], [0, 0]);
+});
+
+const failLog = n => [
+  '\x1b[32mstarting\x1b[0m', 'compiling', `2026-10-01T10:00:0${n}Z test main.join_cache [ fail ] after ${n}23 ms`,
+  `mysqltest: At line ${40 + n}: query 'select' failed: 2013: Lost connection`, 'main.alter [ pass ]', 'Completed: Failed 1/310 tests', '', ''].join('\n');
+check('a log excerpt: failure lines once per signature, ANSI gone, the last lines', () => {
+  const ex = G.logExcerpt(failLog(1) + "\nmysqltest: At line 99: query 'select' failed: 2013: Lost connection\n");
+  assert.strictEqual(ex.lines, 9);   // trailing blank lines dropped
+  assert.deepStrictEqual(ex.hits.map(h => h.at), [3, 4, 6]);   // line 9 repeats line 4's signature
+  assert.strictEqual(ex.tail[0], 'starting');
+  assert.strictEqual(G.logSig('at 0xdeadbeef1 in 12.5 ms'), G.logSig('at 0xcafebabe2 in 7 ms'));
+});
+check('the likely cause: in most failing logs, never in a passing one', () => {
+  const pass = { n: 3, ex: G.logExcerpt('main.alter [ pass ]\nCompleted: Failed 0/310 tests') };
+  const R = G.recurring([{ n: 1, ex: G.logExcerpt(failLog(1)) }, { n: 2, ex: G.logExcerpt(failLog(2)) }, { n: 4, ex: G.logExcerpt('timeout in main.other') }], [pass]);
+  assert.deepStrictEqual(R.map(c => c.builds.length), [2, 2]);
+  assert.ok(R[0].text.includes('join_cache'));
+  assert.ok(!R.some(c => c.text.startsWith('Completed')));   // the passing log prints it too
+  assert.ok(!R.some(c => c.text.includes('main.other')));   // one build only: noise
+});
+check('the brief links every build to its step log and quotes the shared lines', () => {
+  const X = G.flakes([
+    F(80, 'pull_request', 'i1', d1, [W('base', 'failure', d1, d1 + 600, { mtr: ['f', 300, 17] })]),
+    F(81, 'pull_request', 'i1', d1 + 3600, [W('base', 'success', d1 + 3600, d1 + 4200, { mtr: ['s', 300, 23] })], 80),
+  ], now);
+  const logs = new Map([[80, { ex: G.logExcerpt(failLog(1)), stepId: 900 }], [81, { ex: G.logExcerpt('ok'), stepId: 901 }]]);
+  const fails = [{ n: 80, ex: logs.get(80).ex }], cause = G.recurring(fails, [{ n: 81, ex: logs.get(81).ex }]);
+  const md = G.flakeBrief({ repo: 'acme/app', s: X.steps[0], flaky: X.events, real: X.real, logs, cause, days: 28,
+    uiUrl: (n, pid) => `https://ci/repos/1/pipeline/${n}/${pid}`, apiUrl: (n, id) => `https://ci/api/repos/1/logs/${n}/${id}` });
+  assert.ok(md.includes('[#80](https://ci/repos/1/pipeline/80/17) | [#81](https://ci/repos/1/pipeline/81/23)'));
+  assert.ok(md.includes('GET https://ci/api/repos/1/logs/80/900'));
+  assert.ok(md.includes('1/1 builds: `mysqltest: At line 41'));
+  assert.ok(md.includes('## Task'));
+});
+
+// Tests inside a step.
+const MTR_LOG = [
+  'main.alpha                               w1 [ pass ]     12',
+  'main.beta                                w2 [ fail ]',
+  '        Test ended at 2026-10-01 10:00:00',
+  'CURRENT_TEST: main.beta',
+  "mysqltest: At line 7: query 'SELECT 1' failed: 2013: Lost connection",
+  'main.gamma                               w1 [ fail ]',
+  '--- /x/main/gamma.result',
+  '+++ /x/main/gamma.reject',
+  'Retrying test main.beta, attempt(2/2)...',
+  'main.beta                                w2 [ retry-pass ]     40',
+  'main.gamma                               w1 [ retry-fail ]',
+  'main.delta                               w3 [ skipped ]  Requires debug build',
+  'Failing test(s): main.gamma',
+].join('\n');
+check('mtr: a failure rescued by a retry is flaky, one that stays is a fail; noise is left out of `why`', () => {
+  const r = G.TEST_PARSERS.mtr(MTR_LOG);
+  assert.deepStrictEqual(r.tests.map(t => [t.test, t.result, t.at]), [['main.beta', 'flaky', 2], ['main.gamma', 'fail', 6]]);
+  assert.deepStrictEqual(r.tests[0].why, ["mysqltest: At line 7: query 'SELECT 1' failed: 2013: Lost connection"]);
+  assert.strictEqual(G.reasonOf(r.tests[1].why), 'result content mismatch (.result vs .reject diff)');
+});
+check('ctest with gtest output, plain gtest, sanitizer reports and a site regex', () => {
+  const ct = G.TEST_PARSERS.ctest(['1/3 Test #1: A.Ok ......   Passed    0.01 sec', '2/3 Test #2: A.Bad ......***Failed  1.00 sec',
+    '/src/a_test.cc:12: Failure', 'Value of: ok', '  Actual: false (Timeout)', '3/3 Test #3: A.Off ......***Not Run (Disabled)   0.00 sec'].join('\n'));
+  assert.deepStrictEqual(ct.tests.map(t => [t.test, t.result]), [['A.Bad', 'fail']]);
+  assert.strictEqual(G.reasonOf(ct.tests[0].why), '  Actual: false (Timeout)');
+  const gt = G.TEST_PARSERS.ctest('[ RUN      ] S.T\nboom: Failure\n[  FAILED  ] S.T (3 ms)\n[       OK ] S.U (1 ms)');
+  assert.deepStrictEqual(gt.tests.map(t => t.test), ['S.T']);
+  const san = G.TEST_PARSERS.sanitizer(['WARNING: ThreadSanitizer: data race (pid=1)', '  Write of size 8 at 0x7b0 by thread T1:',
+    '    #0 __tsan_write8 <null> (x+0x1)', '    #1 app::Cache::put(int) /src/cache.cc:10:3 (x+0x2)',
+    '==2==ERROR: AddressSanitizer: heap-use-after-free on address 0x60', '    #0 0x55 in app::Row::get() /src/row.cc:4'].join('\n'));
+  assert.deepStrictEqual(san.tests.map(t => t.test), ['ThreadSanitizer: data race in app::Cache::put', 'AddressSanitizer: heap-use-after-free in app::Row::get']);
+  const rx = G.testParser({ parser: 'regex', fail: '^FAIL (?<test>\\S+)', pass: '^PASS (?<test>\\S+)' });
+  assert.deepStrictEqual(rx('FAIL a/b\nwhy\nPASS c\nFAIL d').tests.map(t => [t.test, t.result]), [['a/b', 'fail'], ['d', 'fail']]);
+  assert.strictEqual(G.parserFor([{ steps: ['mtr-*'], parser: 'mtr' }], 'base › mtr-asan'), G.TEST_PARSERS.mtr);
+  assert.strictEqual(G.parserFor([{ steps: ['mtr-*'], parser: 'mtr' }], 'base › build'), null);
+});
+check('flaky tests: in-run, rerun on the same commit, failing, and intermittent on main', () => {
+  const st = (k, pid) => ({ mtr: [k, 100, pid, pid + 1000] });
+  const recs = [
+    F(200, 'pull_request', 'p1', d1, [W('base', 'failure', d1, d1 + 600, st('f', 1))]),             // beta in-run, gamma fails
+    F(201, 'pull_request', 'p1', d1 + 3600, [W('base', 'success', d1 + 3600, d1 + 4200, st('s', 2))], 200),   // rerun passes
+    F(210, 'push', 'm1', d1 - 3 * 86400, [W('base', 'failure', d1, d1 + 600, st('f', 3))]),
+    F(211, 'push', 'm2', d1 - 2 * 86400, [W('base', 'success', d1, d1 + 600, st('s', 4))]),
+    F(212, 'push', 'm3', d1 - 86400, [W('base', 'failure', d1, d1 + 600, st('f', 5))]),
+    F(220, 'pull_request', 'p2', d1, [W('base', 'failure', d1, d1 + 600, st('f', 6))]),
+  ];
+  const T = n => ({ tests: [{ test: n, result: 'fail', at: 9, why: ['boom: Failure'] }] });
+  const parsed = new Map([['200|base › mtr', G.TEST_PARSERS.mtr(MTR_LOG)], ['210|base › mtr', T('main.eps')], ['212|base › mtr', T('main.eps')], ['220|base › mtr', T('main.zeta')]]);
+  const X = G.testFlakes(recs, parsed, now, 28, G.WX_EVENTS.ci, 'acme/app');
+  const by = Object.fromEntries(X.map(t => [t.test, t]));
+  assert.deepStrictEqual([by['main.beta'].kind, by['main.beta'].occurrences[0].kind], ['flaky', 'in-run']);
+  assert.deepStrictEqual([by['main.gamma'].kind, by['main.gamma'].occurrences[0].kind, by['main.gamma'].occurrences[0].passN], ['flaky', 'rerun', 201]);
+  assert.strictEqual(by['main.eps'].kind, 'intermittent');   // main: fail, pass, fail
+  assert.strictEqual(by['main.zeta'].kind, 'failing');
+  assert.deepStrictEqual([by['main.beta'].occurrences[0].pid, by['main.beta'].occurrences[0].id], [1, 1001]);
+  assert.strictEqual(by['main.beta'].fingerprint, G.testFingerprint('acme/app', 'main.beta'));
+  assert.match(by['main.beta'].fingerprint, /^fl-[0-9a-f]{8}$/);
+  assert.deepStrictEqual(X.map(t => t.kind), ['flaky', 'flaky', 'intermittent', 'failing']);
+  const md = G.testBrief(by['main.gamma'], { repo: 'acme/app', days: 28, uiUrl: (n, pid) => `https://ci/p/${n}/${pid}`, apiUrl: (n, id) => `https://ci/api/${n}/${id}` });
+  assert.ok(md.includes(`label \`${by['main.gamma'].fingerprint}\``));
+  assert.ok(md.includes('[#200](https://ci/p/200/1)'));
+  assert.ok(md.includes('passed in #201'));
+  assert.ok(md.includes('GET https://ci/api/200/1001'));
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

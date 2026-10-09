@@ -29,6 +29,11 @@ window.BIRDWATCHER_CONFIG = {
     compare: { LIB_SHA: 'https://github.com/acme/lib/compare/{from}...{to}' },
   },
 
+  // The flakes server (server/flakes.js): the tests that flake inside a step,
+  // read from every failed step log, as a REST API. CI weather then lists
+  // flaky tests and their shared causes. Leave out to show flaky steps only.
+  flakes: { url: '/flakes' },          // embedded: a same-origin path; standalone: a full URL
+
   // HTML comment markers (<!-- ci-report -->) of the CI's PR report comments.
   reportMarkers: { bench: 'ci-report', cov: 'coverage-report' },
 

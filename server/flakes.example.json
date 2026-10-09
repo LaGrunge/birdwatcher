@@ -1,0 +1,19 @@
+{
+  "server": "https://woodpecker.example.com",
+  "publicUrl": "https://woodpecker.example.com",
+  "tokenEnv": "WOODPECKER_TOKEN",
+  "repos": ["acme/app"],
+  "dataDir": "flakes-data",
+  "host": "127.0.0.1",
+  "port": 8090,
+  "basePath": "/flakes",
+  "days": 28,
+  "pollSec": 120,
+  "allowOrigin": [],
+  "parsers": [
+    { "steps": ["mtr", "mtr-*"], "parser": "mtr" },
+    { "steps": ["unit-tests", "*-ctest"], "parser": "ctest" },
+    { "steps": ["sanitizer-log"], "parser": "sanitizer" },
+    { "steps": ["e2e"], "parser": "regex", "fail": "^FAIL: (?<test>\\S+)", "pass": "^PASS: (?<test>\\S+)" }
+  ]
+}

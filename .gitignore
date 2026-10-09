@@ -1,2 +1,4 @@
 config.js
 plugin.js
+flakes-data/
+flakes.json

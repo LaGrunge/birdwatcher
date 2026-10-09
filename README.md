@@ -127,8 +127,22 @@ CI, with the same counts as the tab strip narrower screens keep.
   steps × days, the ranking with flake rate, real failures, PRs hit and the
   agent time lost to reruns (a restart or a repeated manual run that only
   chased flakes; not the next night's cron), and the recent flakes with
-  links to the failing and the passing pipeline. Flakes across different
+  links to the failing and the passing build. Flakes across different
   commits aren't claimed: nothing proves the change in between was unrelated.
+  A flake is counted per build, and every build link opens the step's log.
+  Click a step (in the ranking or the map) for every build it failed in,
+  flaky or for real, each with its PR or branch, commit and attempt, and a
+  log excerpt on demand: the lines that read like a failure plus the last
+  lines, next to the passing log of the same commit. "Read logs" reads the
+  latest five failing builds and their passing twins and lists the failure
+  lines most failing logs print and no passing one does (numbers, hashes and
+  timestamps ignored): the likely cause. "Brief for Claude" turns all of it
+  into a Markdown task (builds, log links and API paths, shared lines,
+  excerpts) to paste into an agent that should find the cause and fix it.
+  Logs are read only on these clicks (two Woodpecker requests per log) and
+  kept in memory. With a [flakes server](#flakes-server) configured, the tab
+  also lists flaky **tests** (inside the steps), the causes several of them
+  share, and one test's builds, clustered reasons and brief.
 - **CI minutes** — where the agent time of the last 28 days went: this week
   against the last, the queue wait for an agent, the superseded share (killed
   runs), per day by architecture (arm64 from a `-arm64` workflow suffix), an
@@ -257,6 +271,64 @@ for a Woodpecker token and, optionally, a GitHub token (both stay in the
 browser's `localStorage`). The reports cards work when the page is served
 from the reports host itself or a reports base URL is set in settings.
 
+## Flakes server
+
+`server/flakes.js` serves the CI weather data as a read-only REST API, for
+the board and for agents that triage, fix and file flaky tests. Zero
+dependencies; the logic is board.js's own (the `@runs` block is loaded as
+is), so the two can't disagree. It goes one level below the board: it reads
+the log of every failed step a parser covers and finds the **tests** that
+flake inside it.
+
+```bash
+cp server/flakes.example.json flakes.json      # server (+ publicUrl for links), repos, parsers, port…
+WOODPECKER_TOKEN=… node server/flakes.js --config flakes.json          # serve, re-sync every pollSec
+WOODPECKER_TOKEN=… node server/flakes.js --config flakes.json --once   # sync, print a summary, exit
+```
+
+Parsers say which steps hold tests and how to read them: `mtr` (MariaDB
+mysql-test-run, retries included), `ctest` (CTest, else GoogleTest),
+`sanitizer` (one "test" per kind of ASan/TSan/UBSan report and its first
+frame outside the runtime), or `regex` with a `fail` (and optional `pass`)
+pattern holding a named group `test`, for a report format of your own.
+
+A test failure in a build is **in-run** (it passed on a retry in the same
+run), **rerun** (another attempt of the same commit passed it) or **fail**
+(every attempt failed it). A test with an in-run or rerun failure is
+*flaky*; one that only failed for good is *intermittent* when main or a cron
+failed, passed, then failed it again, or three or more PRs failed it; else
+*failing* (most often a PR's own bug). Each test has a fingerprint
+(`fl-` + 8 hex digits of the repo and test name, stable across windows):
+put it on a ticket as a label and look it up before filing another.
+
+All `GET`, JSON unless noted, under `/flakes/v1`, deterministic order, ETag
+(`If-None-Match` → 304):
+
+| Path | |
+|---|---|
+| `/health` | sync state per repo, Woodpecker requests made |
+| `/repos` | the repos served |
+| `/repos/{owner}/{name}/tests` | flaky, intermittent and failing tests with counts, status (new, regressed, known, quiet), the top reason; `?kind=flaky,intermittent&status=&q=&days=&events=all&limit=` |
+| `/repos/{o}/{n}/tests/{test}` | every failure: build, step, PR or branch, commit, attempt, kind, the output after the failure, links to the step log (UI and API) and the excerpt; reasons clustered |
+| `/repos/{o}/{n}/tests/{test}/brief` | Markdown: a task to find the cause and fix it, or file it under its fingerprint |
+| `/repos/{o}/{n}/clusters` | one reason behind several tests: fix once |
+| `/repos/{o}/{n}/steps`, `/steps/{workflow}/{step}`, `…/brief` | the board's flaky steps, every failed build of one, its brief |
+| `/repos/{o}/{n}/logs/{pipeline}/{workflow}/{step}` | one step log's excerpt and tests, read on demand |
+| `/fingerprints/{fp}` | the test a ticket label points to |
+
+Storage: `dataDir/<repo id>/runs.json` (the trimmed pipelines) and
+`logs/<pipeline>-<step id>.json` (an excerpt and the parsed tests, never the
+log). A log is re-read only when the parser config or code changes. Request
+budget: a cold 28 days is one pipeline list, one detail per pipeline and one
+log per failed parsed step (a busy repo: ~900 requests, ~30 s); afterwards
+one list page per `pollSec` plus whatever finished since. No GitHub requests.
+
+The server binds to `127.0.0.1` by default and has no auth of its own: put it
+behind the same forward auth as the board (embedded, `flakes.url` is a
+same-origin path) and list the board's origin in `allowOrigin` only when it
+runs standalone on another origin. It never writes anywhere but `dataDir`,
+and responses never carry the token.
+
 ## Tests
 
 ```bash
@@ -267,6 +339,7 @@ node tests/runs_test.js       # CI minutes and CI weather: trimmed pipelines, ag
 node tests/digest_test.js     # the Weekly digest: titles, the week's grouping, the summaries
 node tests/flow_test.js       # Flow: the stages of a merged PR in working time
 node tests/incident_test.js   # red main: owner, cause (flake, code, pins, environment), PRs it blocks
+node tests/server_test.js     # the flakes server against a stub Woodpecker: sync, endpoints, ETags, read-only
 ```
 
 ## License
